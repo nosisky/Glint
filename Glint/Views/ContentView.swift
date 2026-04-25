@@ -24,58 +24,46 @@ struct ContentView: View {
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
         .toolbar {
-            // Database picker — Postico-style with icon
+            // Database picker — clean native Picker, no icons
             ToolbarItem(placement: .principal) {
                 if appState.isConnected {
-                    HStack(spacing: 12) {
-                        // DB picker
-                        HStack(spacing: 4) {
-                            Image(systemName: "cylinder")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-
-                            if appState.databases.count > 1 {
-                                Picker("", selection: Binding(
-                                    get: { appState.currentDatabase },
-                                    set: { db in Task { await appState.switchDatabase(db) } }
-                                )) {
-                                    ForEach(appState.databases, id: \.self) { db in
-                                        Text(db).tag(db)
-                                    }
+                    HStack(spacing: 10) {
+                        if appState.databases.count > 1 {
+                            Picker("", selection: Binding(
+                                get: { appState.currentDatabase },
+                                set: { db in Task { await appState.switchDatabase(db) } }
+                            )) {
+                                ForEach(appState.databases, id: \.self) { db in
+                                    Text(db).tag(db)
                                 }
-                                .labelsHidden()
-                                .frame(minWidth: 120)
-                            } else {
-                                Text(appState.currentDatabase)
-                                    .font(.system(size: 13))
                             }
+                            .labelsHidden()
+                            .frame(minWidth: 120)
+                        } else {
+                            Text(appState.currentDatabase)
+                                .font(.system(size: 13))
                         }
 
-                        // Connection status
                         if appState.isConnecting {
                             ProgressView().controlSize(.small)
                         } else {
-                            HStack(spacing: 4) {
-                                Text("Connected")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-
-                                Image(systemName: "lock.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.tertiary)
-
-                                Button {
-                                    Task { await appState.loadSchema() }
-                                } label: {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 11))
-                                }
-                                .buttonStyle(.plain)
+                            Text("Connected")
+                                .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
-                                .help("Refresh Schema")
-                            }
                         }
                     }
+                }
+            }
+
+            // Refresh — proper toolbar button
+            ToolbarItem(placement: .automatic) {
+                if appState.isConnected {
+                    Button {
+                        Task { await appState.loadSchema() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .help("Refresh Schema")
                 }
             }
         }
@@ -124,7 +112,26 @@ struct TableContentArea: View {
             // Main content
             switch tab {
             case .content:
-                DataGridView()
+                if appState.isLoadingData && appState.queryResult.rows.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if appState.queryResult.rows.isEmpty && !appState.isLoadingData {
+                    ContentUnavailableView {
+                        Label(appState.hasActiveFilters ? "No Results" : "Empty Table", systemImage: "tray")
+                    } description: {
+                        if appState.hasActiveFilters {
+                            Text("No rows match the current filters.")
+                        }
+                    } actions: {
+                        if appState.hasActiveFilters {
+                            Button("Clear Filters") {
+                                Task { await appState.clearAllFilters() }
+                            }
+                        }
+                    }
+                } else {
+                    DataGridView()
+                }
             case .structure:
                 if let table = appState.selectedTable {
                     TableStructureView(table: table)
