@@ -40,35 +40,35 @@ struct ConnectionSheet: View {
                     // Connection section
                     FormSection(title: "Connection") {
                         FormField(label: "Name") {
-                            TextField("My Database", text: $config.name)
-                                .textFieldStyle(.roundedBorder)
+                            NativeTextField(text: $config.name, placeholder: "My Database")
+                                .frame(height: 24)
                         }
                         FormField(label: "Host") {
-                            TextField("localhost", text: $config.host)
-                                .textFieldStyle(.roundedBorder)
+                            NativeTextField(text: $config.host, placeholder: "localhost")
+                                .frame(height: 24)
                         }
                         FormField(label: "Port") {
-                            TextField("5432", text: $portString)
-                                .textFieldStyle(.roundedBorder)
+                            NativeTextField(text: $portString, placeholder: "5432")
+                                .frame(height: 24)
                                 .onChange(of: portString) { _, newValue in
                                     config.port = Int(newValue) ?? 5432
                                 }
                         }
                         FormField(label: "Database") {
-                            TextField("postgres", text: $config.database)
-                                .textFieldStyle(.roundedBorder)
+                            NativeTextField(text: $config.database, placeholder: "postgres")
+                                .frame(height: 24)
                         }
                     }
 
                     // Authentication section
                     FormSection(title: "Authentication") {
                         FormField(label: "User") {
-                            TextField("postgres", text: $config.user)
-                                .textFieldStyle(.roundedBorder)
+                            NativeTextField(text: $config.user, placeholder: "postgres")
+                                .frame(height: 24)
                         }
                         FormField(label: "Password") {
-                            SecureField("Password", text: $password)
-                                .textFieldStyle(.roundedBorder)
+                            NativeSecureField(text: $password, placeholder: "Password")
+                                .frame(height: 24)
                         }
                     }
 
