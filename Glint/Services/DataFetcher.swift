@@ -39,14 +39,17 @@ actor DataFetcher {
         // Execute data query
         let rawRows = try await connection.queryAll(sql)
 
-        // Materialize rows into our generic TableRow model
-        let rows = materializeRows(rawRows, columns: table.columns)
+        // Build columns from actual SQL result — guarantees alignment with data
+        let resultColumns = buildResultColumns(from: rawRows, tableColumns: table.columns)
+
+        // Materialize rows using result column order (not schema order)
+        let rows = materializeRows(rawRows, columns: resultColumns)
 
         let executionTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
 
         return QueryResult(
             rows: rows,
-            columns: table.columns,
+            columns: resultColumns,
             totalCount: totalCount,
             pageSize: pageSize,
             currentOffset: offset,
@@ -55,31 +58,81 @@ actor DataFetcher {
         )
     }
 
+    // MARK: - Column Discovery
+
+    /// Build ColumnInfo array from the actual SQL result to guarantee
+    /// that header columns and data cells are always in the same order.
+    private func buildResultColumns(from pgRows: [PostgresRow], tableColumns: [ColumnInfo]) -> [ColumnInfo] {
+        guard let firstRow = pgRows.first else { return tableColumns }
+
+        let cells = firstRow.makeRandomAccess()
+        var result: [ColumnInfo] = []
+
+        for i in 0..<cells.count {
+            let cell = cells[i]
+            let name = cell.columnName
+
+            // Enrich with schema metadata if available
+            if let meta = tableColumns.first(where: { $0.name == name }) {
+                result.append(ColumnInfo(
+                    name: name,
+                    tableName: meta.tableName,
+                    dataType: meta.dataType,
+                    udtName: meta.udtName,
+                    isNullable: meta.isNullable,
+                    isPrimaryKey: meta.isPrimaryKey,
+                    hasDefault: meta.hasDefault,
+                    defaultValue: meta.defaultValue,
+                    characterMaxLength: meta.characterMaxLength,
+                    numericPrecision: meta.numericPrecision,
+                    ordinalPosition: i
+                ))
+            } else {
+                // Column not in schema metadata (expression, alias, etc.)
+                result.append(ColumnInfo(
+                    name: name,
+                    tableName: "",
+                    dataType: "text",
+                    udtName: "text",
+                    isNullable: true,
+                    isPrimaryKey: false,
+                    hasDefault: false,
+                    defaultValue: nil,
+                    characterMaxLength: nil,
+                    numericPrecision: nil,
+                    ordinalPosition: i
+                ))
+            }
+        }
+
+        return result
+    }
+
     // MARK: - Row Materialization
 
     /// Convert PostgresNIO rows into our generic TableRow representation.
+    /// Iterates through the row's cells directly (not schema columns) to preserve alignment.
     private func materializeRows(_ pgRows: [PostgresRow], columns: [ColumnInfo]) -> [TableRow] {
         pgRows.map { pgRow in
             let randomAccess = pgRow.makeRandomAccess()
             var values: [CellValue] = []
 
-            for (index, column) in columns.enumerated() {
-                guard index < randomAccess.count else {
-                    values.append(CellValue(columnName: column.name, rawValue: nil, dataType: column.udtName))
-                    continue
-                }
-
-                let cell = randomAccess[index]
+            for i in 0..<randomAccess.count {
+                let cell = randomAccess[i]
+                let colInfo = columns.indices.contains(i) ? columns[i] : nil
                 let rawValue: String?
 
                 if cell.bytes == nil {
                     rawValue = nil
                 } else {
-                    // Try to decode as String — most PG types can cast to text
                     rawValue = try? cell.decode(String.self)
                 }
 
-                values.append(CellValue(columnName: column.name, rawValue: rawValue, dataType: column.udtName))
+                values.append(CellValue(
+                    columnName: cell.columnName,
+                    rawValue: rawValue,
+                    dataType: colInfo?.udtName ?? "text"
+                ))
             }
 
             return TableRow(values: values)

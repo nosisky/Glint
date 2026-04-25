@@ -24,38 +24,57 @@ struct ContentView: View {
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
         .toolbar {
-            // Database picker — center of toolbar, Postico-style
+            // Database picker — Postico-style with icon
             ToolbarItem(placement: .principal) {
-                if appState.isConnected && appState.databases.count > 1 {
-                    Picker("", selection: Binding(
-                        get: { appState.currentDatabase },
-                        set: { db in Task { await appState.switchDatabase(db) } }
-                    )) {
-                        ForEach(appState.databases, id: \.self) { db in
-                            Text(db).tag(db)
-                        }
-                    }
-                    .frame(width: 180)
-                } else if appState.isConnected {
-                    Text(appState.currentDatabase)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-            }
+                if appState.isConnected {
+                    HStack(spacing: 12) {
+                        // DB picker
+                        HStack(spacing: 4) {
+                            Image(systemName: "cylinder")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
 
-            // Connection status
-            ToolbarItem(placement: .status) {
-                if appState.isConnecting {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if appState.isConnected {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 6, height: 6)
-                        Text(appState.activeConfig.map { "\($0.host):\($0.port)" } ?? "")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
+                            if appState.databases.count > 1 {
+                                Picker("", selection: Binding(
+                                    get: { appState.currentDatabase },
+                                    set: { db in Task { await appState.switchDatabase(db) } }
+                                )) {
+                                    ForEach(appState.databases, id: \.self) { db in
+                                        Text(db).tag(db)
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(minWidth: 120)
+                            } else {
+                                Text(appState.currentDatabase)
+                                    .font(.system(size: 13))
+                            }
+                        }
+
+                        // Connection status
+                        if appState.isConnecting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            HStack(spacing: 4) {
+                                Text("Connected")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+
+                                Button {
+                                    Task { await appState.loadSchema() }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 11))
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                                .help("Refresh Schema")
+                            }
+                        }
                     }
                 }
             }

@@ -50,9 +50,10 @@ struct QueryBuilder: Sendable {
         }
 
         // Build SELECT list — cast every column to text so PG formats values
-        // for us (timestamps, bigints, booleans, etc.) instead of binary wire format
+        // for us (timestamps, bigints, booleans, etc.) instead of binary wire format.
+        // AS alias preserves the original column name in the result.
         let selectColumns = table.columns.map { col in
-            "\"\(col.name)\"::text"
+            "\"\(col.name)\"::text AS \"\(col.name)\""
         }.joined(separator: ", ")
 
         // Fallback: if no columns known, use *
