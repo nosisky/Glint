@@ -1,6 +1,6 @@
-  import SwiftUI
+import SwiftUI
 
-/// Data grid — compact spreadsheet, Postico-style.
+/// Data grid — fills full width, columns auto-sized.
 struct DataGridView: View {
     @Environment(AppState.self) private var appState
 
@@ -24,32 +24,66 @@ struct DataGridView: View {
                     }
                 }
             } else {
-                gridContent
+                GeometryReader { geo in
+                    let columns = appState.queryResult.columns
+                    let widths = calculateColumnWidths(columns: columns, available: geo.size.width)
+                    let totalWidth = widths.reduce(0, +) + CGFloat(max(columns.count - 1, 0)) // +1px per separator
+
+                    ScrollView([.horizontal, .vertical]) {
+                        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            Section {
+                                ForEach(Array(appState.queryResult.rows.enumerated()), id: \.element.id) { index, row in
+                                    RowView(row: row, widths: widths, index: index)
+                                }
+                            } header: {
+                                HeaderView(columns: columns, widths: widths)
+                            }
+                        }
+                        .frame(minWidth: totalWidth)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if appState.isLoadingData {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(6)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                                .padding(8)
+                        }
+                    }
+                }
             }
         }
     }
 
-    private var gridContent: some View {
-        ScrollView([.horizontal, .vertical]) {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    ForEach(Array(appState.queryResult.rows.enumerated()), id: \.element.id) { index, row in
-                        RowView(row: row, columns: appState.queryResult.columns, index: index)
-                    }
-                } header: {
-                    HeaderView(columns: appState.queryResult.columns)
-                }
-            }
+    /// Calculate column widths to fill the available width.
+    /// Each column gets at least a minimum width. If there's extra space, distribute evenly.
+    private func calculateColumnWidths(columns: [ColumnInfo], available: CGFloat) -> [CGFloat] {
+        guard !columns.isEmpty else { return [] }
+
+        let separators = CGFloat(max(columns.count - 1, 0))
+        let usable = available - separators
+
+        // Base minimum widths per type
+        let minWidths: [CGFloat] = columns.map { col in
+            if col.isBoolean { return 70 }
+            if col.isNumeric { return 90 }
+            if col.isTemporal { return 140 }
+            // Estimate by column name length
+            let nameWidth = max(CGFloat(col.name.count) * 8, 80)
+            return min(nameWidth, 200)
         }
-        .overlay(alignment: .topTrailing) {
-            if appState.isLoadingData {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
-                    .padding(8)
-            }
+
+        let totalMin = minWidths.reduce(0, +)
+
+        if totalMin >= usable {
+            // Not enough space — use minimums (horizontal scroll will kick in)
+            return minWidths
         }
+
+        // Distribute extra space proportionally
+        let extra = usable - totalMin
+        let perColumn = extra / CGFloat(columns.count)
+        return minWidths.map { $0 + perColumn }
     }
 }
 
@@ -57,17 +91,17 @@ struct DataGridView: View {
 
 private struct HeaderView: View {
     let columns: [ColumnInfo]
+    let widths: [CGFloat]
     @Environment(AppState.self) private var appState
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(columns.enumerated()), id: \.element.id) { index, col in
+            ForEach(Array(columns.enumerated()), id: \.element.id) { i, col in
                 Button {
                     Task { await appState.toggleSort(column: col.name) }
                 } label: {
                     HStack(spacing: 3) {
                         Text(col.name)
-                            .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
 
                         if appState.orderByColumn == col.name {
@@ -75,34 +109,25 @@ private struct HeaderView: View {
                                 .font(.system(size: 7, weight: .bold))
                                 .foregroundStyle(.tertiary)
                         }
-
-                        Spacer()
                     }
-                    .frame(width: columnWidth(for: col), alignment: .leading)
-                    .padding(.horizontal, 6)
+                    .frame(width: widths[safe: i] ?? 120, alignment: .leading)
+                    .padding(.horizontal, 8)
                 }
                 .buttonStyle(.plain)
 
-                if index < columns.count - 1 {
+                if i < columns.count - 1 {
                     Rectangle()
                         .fill(Color(nsColor: .separatorColor))
                         .frame(width: 1)
                 }
             }
         }
-        .frame(height: 22)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .font(.system(size: 11, weight: .medium))
+        .frame(height: 24)
+        .background(Color(nsColor: .controlBackgroundColor))
         .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(height: 1)
+            Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1)
         }
-    }
-
-    private func columnWidth(for col: ColumnInfo) -> CGFloat {
-        if col.isBoolean { return 80 }
-        if col.isNumeric { return 100 }
-        return 150
     }
 }
 
@@ -110,27 +135,24 @@ private struct HeaderView: View {
 
 private struct RowView: View {
     let row: TableRow
-    let columns: [ColumnInfo]
+    let widths: [CGFloat]
     let index: Int
     @Environment(AppState.self) private var appState
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(row.values.enumerated()), id: \.offset) { colIndex, cell in
-                CellView(
-                    cell: cell, rowId: row.id, columnIndex: colIndex,
-                    width: columnWidth(colIndex)
-                )
+            ForEach(Array(row.values.enumerated()), id: \.offset) { i, cell in
+                CellView(cell: cell, rowId: row.id, columnIndex: i, width: widths[safe: i] ?? 120)
 
-                if colIndex < row.values.count - 1 {
+                if i < row.values.count - 1 {
                     Rectangle()
-                        .fill(Color(nsColor: .separatorColor).opacity(0.4))
+                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
                         .frame(width: 1)
                 }
             }
         }
-        .frame(height: 20)
+        .frame(height: 22)
         .background {
             if isHovered {
                 Color.accentColor.opacity(0.08)
@@ -139,14 +161,9 @@ private struct RowView: View {
             }
         }
         .onHover { isHovered = $0 }
-    }
-
-    private func columnWidth(_ colIndex: Int) -> CGFloat {
-        guard colIndex < columns.count else { return 150 }
-        let col = columns[colIndex]
-        if col.isBoolean { return 80 }
-        if col.isNumeric { return 100 }
-        return 150
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.15)).frame(height: 1)
+        }
     }
 }
 
@@ -171,7 +188,7 @@ private struct CellView: View {
                 TextField("", text: $editText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11, design: .monospaced))
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, 8)
                     .onSubmit { commitEdit() }
                     .onExitCommand { isEditing = false }
             } else {
@@ -180,7 +197,8 @@ private struct CellView: View {
                     .foregroundStyle(cell.isNull ? .tertiary : .primary)
                     .italic(cell.isNull)
                     .lineLimit(1)
-                    .padding(.horizontal, 6)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 8)
                     .frame(width: width, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) {
@@ -206,5 +224,13 @@ private struct CellView: View {
             originalValue: cell.rawValue,
             newValue: editText.isEmpty ? nil : editText
         ))
+    }
+}
+
+// MARK: - Safe Array Index
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
