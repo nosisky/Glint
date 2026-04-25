@@ -39,6 +39,9 @@ actor PostgresConnection {
     // MARK: - Lifecycle
 
     func connect() async throws {
+        // Cancel any existing connection first
+        disconnect()
+
         var tlsConfig: PostgresClient.Configuration.TLS = .disable
         if config.useSSL {
             tlsConfig = .prefer(.makeClientConfiguration())
@@ -56,15 +59,24 @@ actor PostgresConnection {
         let newClient = PostgresClient(configuration: pgConfig, backgroundLogger: logger)
 
         // Run the client's event loop in a background task.
-        clientTask = Task {
+        let task = Task {
             await newClient.run()
         }
-
+        clientTask = task
         self.client = newClient
 
-        // Verify connectivity.
-        _ = try await newClient.query("SELECT 1")
-        logger.info("Connected to \(config.host):\(config.port)/\(config.database)")
+        // Verify connectivity — if this fails, tear down immediately
+        // to prevent the pool from retrying with bad credentials.
+        do {
+            _ = try await newClient.query("SELECT 1")
+            logger.info("Connected to \(config.host):\(config.port)/\(config.database)")
+        } catch {
+            // Tear down the client to stop retry loop
+            task.cancel()
+            clientTask = nil
+            client = nil
+            throw ConnectionError.connectionFailed(error.localizedDescription)
+        }
     }
 
     func disconnect() {
