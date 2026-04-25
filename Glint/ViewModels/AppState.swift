@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// Root application state. @Observable for automatic SwiftUI reactivity.
 @MainActor
 @Observable
 final class AppState {
-    // Connection management
+    // Connection
     var savedConnections: [ConnectionConfig] = []
     var activeConnectionId: UUID?
     var connectionPool: ConnectionPool?
@@ -13,33 +12,33 @@ final class AppState {
     var connectionError: String?
     var showConnectionSheet = false
 
-    // Database state
+    // Database
     var databases: [String] = []
     var currentDatabase: String = ""
 
-    // Schema state
+    // Schema
     var schemas: [DatabaseSchemaInfo] = []
     var selectedSchema: String = "public"
     var selectedTable: TableInfo?
     var isLoadingSchema = false
 
-    // Data grid state
+    // Data Grid
     var queryResult: QueryResult = .empty
     var isLoadingData = false
     var currentPage = 1
     var pageSize = 200
 
-    // Filter state
+    // Filters
     var filters: [FilterConstraint] = []
     var globalSearchText = ""
     var orderByColumn: String?
     var orderAscending = true
 
-    // Inline editing
+    // Editing
     var pendingEdits: [PendingEdit] = []
     var editingCellId: String?
 
-    // UI state
+    // UI
     var statusMessage = "Ready"
     var selectedSidebarItem: SidebarItem?
     var showConsole = false
@@ -48,15 +47,8 @@ final class AppState {
     // MARK: - Computed
 
     var isConnected: Bool { connectionPool != nil }
-
-    var activeConfig: ConnectionConfig? {
-        savedConnections.first { $0.id == activeConnectionId }
-    }
-
-    var hasActiveFilters: Bool {
-        !filters.isEmpty || !globalSearchText.isEmpty
-    }
-
+    var activeConfig: ConnectionConfig? { savedConnections.first { $0.id == activeConnectionId } }
+    var hasActiveFilters: Bool { !filters.isEmpty || !globalSearchText.isEmpty }
     var hasPendingEdits: Bool { !pendingEdits.isEmpty }
 
     // MARK: - Persistence
@@ -102,8 +94,6 @@ final class AppState {
             activePassword = password
             currentDatabase = config.database
             statusMessage = "Connected to \(config.database)"
-
-            // Load available databases and schema
             await loadDatabases()
             await loadSchema()
         } catch {
@@ -115,9 +105,7 @@ final class AppState {
     }
 
     func disconnect() async {
-        if let pool = connectionPool {
-            await pool.disconnectAll()
-        }
+        if let pool = connectionPool { await pool.disconnectAll() }
         connectionPool = nil
         activeConnectionId = nil
         activePassword = nil
@@ -140,7 +128,6 @@ final class AppState {
             let introspector = SchemaIntrospector(connection: conn)
             databases = try await introspector.fetchDatabases()
         } catch {
-            // Non-fatal — just won't show the database picker
             databases = [currentDatabase]
         }
     }
@@ -151,20 +138,16 @@ final class AppState {
               let password = activePassword
         else { return }
 
-        // Disconnect from current database
-        if let pool = connectionPool {
-            await pool.disconnectAll()
-        }
+        if let pool = connectionPool { await pool.disconnectAll() }
         connectionPool = nil
         schemas = []
         selectedTable = nil
         queryResult = .empty
         currentDatabase = dbName
+        statusMessage = "Switching to \(dbName)…"
 
-        // Reconnect with the new database name
         var newConfig = config
         newConfig.database = dbName
-        statusMessage = "Switching to \(dbName)…"
 
         do {
             let pool = ConnectionPool(config: newConfig, password: password)
@@ -192,23 +175,18 @@ final class AppState {
             var loadedSchemas: [DatabaseSchemaInfo] = []
             for var schema in schemaInfos {
                 let tables = try await introspector.fetchTables(schema: schema.name)
-                // Load columns for each table so they're ready for selectTable
-                var tablesWithColumns: [TableInfo] = []
+                var enrichedTables: [TableInfo] = []
                 for var table in tables {
-                    table.columns = try await introspector.fetchColumns(
-                        schema: schema.name,
-                        table: table.name
-                    )
-                    tablesWithColumns.append(table)
+                    table.columns = try await introspector.fetchColumns(schema: schema.name, table: table.name)
+                    enrichedTables.append(table)
                 }
-                schema.tables = tablesWithColumns
+                schema.tables = enrichedTables
                 loadedSchemas.append(schema)
             }
             schemas = loadedSchemas
 
             if schemas.isEmpty {
-                let publicSchema = try await introspector.fetchFullSchema(schema: "public")
-                schemas = [publicSchema]
+                schemas = [try await introspector.fetchFullSchema(schema: "public")]
             }
 
             let tableCount = schemas.flatMap(\.tables).count
@@ -225,7 +203,6 @@ final class AppState {
     func fetchTableData() async {
         guard let pool = connectionPool, let table = selectedTable else { return }
         isLoadingData = true
-        let offset = (currentPage - 1) * pageSize
 
         do {
             let conn = try await pool.getConnection()
@@ -237,7 +214,7 @@ final class AppState {
                 orderBy: orderByColumn,
                 ascending: orderAscending,
                 pageSize: pageSize,
-                offset: offset
+                offset: (currentPage - 1) * pageSize
             )
             statusMessage = "\(queryResult.totalCount) rows · \(String(format: "%.1f", queryResult.executionTimeMs))ms"
         } catch {
@@ -317,35 +294,29 @@ final class AppState {
         await fetchTableData()
     }
 
-    // MARK: - Inline Editing
+    // MARK: - Editing
 
     func commitEdits() async {
-        guard let pool = connectionPool, let table = selectedTable else { return }
-        guard !pendingEdits.isEmpty else { return }
+        guard let pool = connectionPool, let table = selectedTable, !pendingEdits.isEmpty else { return }
 
-        // Group edits by row
         let editsByRow = Dictionary(grouping: pendingEdits) { $0.rowId }
 
         do {
             let conn = try await pool.getConnection()
 
             for (rowId, edits) in editsByRow {
-                // Find the original row to get PK value for the WHERE clause
                 guard let originalRow = queryResult.rows.first(where: { $0.id == rowId }),
                       let pkColumn = table.columns.first(where: { $0.isPrimaryKey }),
                       let pkIndex = table.columns.firstIndex(where: { $0.isPrimaryKey }),
                       let pkValue = originalRow[pkIndex]
                 else { continue }
 
-                // Build SET clause
                 let setClauses = edits.compactMap { edit -> String? in
                     guard edit.hasChanged else { return nil }
                     if let newValue = edit.newValue {
-                        let escaped = newValue.replacingOccurrences(of: "'", with: "''")
-                        return "\"\(edit.columnName)\" = '\(escaped)'"
-                    } else {
-                        return "\"\(edit.columnName)\" = NULL"
+                        return "\"\(edit.columnName)\" = '\(newValue.replacingOccurrences(of: "'", with: "''"))'"
                     }
+                    return "\"\(edit.columnName)\" = NULL"
                 }
 
                 guard !setClauses.isEmpty else { continue }
@@ -358,13 +329,11 @@ final class AppState {
                     """
 
                 let rows = try await conn.query(sql)
-                for try await _ in rows { } // drain
+                for try await _ in rows {}
             }
 
             pendingEdits.removeAll()
             statusMessage = "Changes committed"
-
-            // Refresh data to show committed values
             await fetchTableData()
         } catch {
             statusMessage = "Commit failed: \(error.localizedDescription)"
@@ -378,8 +347,8 @@ final class AppState {
 
     func insertNewRow() {
         guard let table = selectedTable else { return }
-        let newRow = TableRow(values: table.columns.map { col in
-            CellValue(columnName: col.name, rawValue: nil, dataType: col.udtName)
+        let newRow = TableRow(values: table.columns.map {
+            CellValue(columnName: $0.name, rawValue: nil, dataType: $0.udtName)
         })
         queryResult = QueryResult(
             rows: [newRow] + queryResult.rows,
@@ -400,24 +369,17 @@ final class AppState {
         do {
             let conn = try await pool.getConnection()
             let introspector = SchemaIntrospector(connection: conn)
-            var updatedTable = table
-            var columns = try await introspector.fetchColumns(
-                schema: table.schema,
-                table: table.name
-            )
-
-            // Enrich with enums and FK references
+            var result = table
+            var columns = try await introspector.fetchColumns(schema: table.schema, table: table.name)
             let enums = try await introspector.fetchEnumTypes()
-            let foreignKeys = try await introspector.fetchForeignKeys(schema: table.schema)
+            let fks = try await introspector.fetchForeignKeys(schema: table.schema)
 
-            for j in columns.indices {
-                if columns[j].dataType.lowercased() == "user-defined" {
-                    columns[j].enumValues = enums[columns[j].udtName]
-                }
+            for i in columns.indices where columns[i].dataType.lowercased() == "user-defined" {
+                columns[i].enumValues = enums[columns[i].udtName]
             }
-            for fk in foreignKeys where fk.tableName == table.name {
-                if let j = columns.firstIndex(where: { $0.name == fk.columnName }) {
-                    columns[j].foreignKey = ForeignKeyRef(
+            for fk in fks where fk.tableName == table.name {
+                if let i = columns.firstIndex(where: { $0.name == fk.columnName }) {
+                    columns[i].foreignKey = ForeignKeyRef(
                         constraintName: fk.constraintName,
                         referencedTable: fk.referencedTable,
                         referencedColumn: fk.referencedColumn
@@ -425,8 +387,8 @@ final class AppState {
                 }
             }
 
-            updatedTable.columns = columns
-            return updatedTable
+            result.columns = columns
+            return result
         } catch {
             return nil
         }

@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Main layout — Postico-style: toolbar with DB picker, sidebar with search, bottom bar.
 struct ContentView: View {
     @Environment(AppState.self) private var appState
 
@@ -24,7 +23,6 @@ struct ContentView: View {
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
         .toolbar {
-            // Database picker — clean native Picker, no icons
             ToolbarItem(placement: .principal) {
                 if appState.isConnected {
                     HStack(spacing: 10) {
@@ -55,7 +53,6 @@ struct ContentView: View {
                 }
             }
 
-            // Refresh — proper toolbar button
             ToolbarItem(placement: .automatic) {
                 if appState.isConnected {
                     Button {
@@ -76,21 +73,16 @@ struct ContentView: View {
     }
 
     private var windowTitle: String {
-        if let table = appState.selectedTable {
-            return table.name
-        }
-        return appState.isConnected ? appState.currentDatabase : "Glint"
+        appState.selectedTable?.name ?? (appState.isConnected ? appState.currentDatabase : "Glint")
     }
 
     private var windowSubtitle: String {
-        if appState.selectedTable != nil, let config = appState.activeConfig {
-            return "\(config.name) – \(appState.currentDatabase)"
-        }
-        return ""
+        guard appState.selectedTable != nil, let config = appState.activeConfig else { return "" }
+        return "\(config.name) – \(appState.currentDatabase)"
     }
 }
 
-// MARK: - Table Content Area (filter bar + grid + bottom bar)
+// MARK: - Table Content Area
 
 struct TableContentArea: View {
     @Environment(AppState.self) private var appState
@@ -104,34 +96,13 @@ struct TableContentArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Filter bar — toggled by bottom bar button
             if appState.showFilterBar && tab == .content {
                 FilterBar()
             }
 
-            // Main content
             switch tab {
             case .content:
-                if appState.isLoadingData && appState.queryResult.rows.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if appState.queryResult.rows.isEmpty && !appState.isLoadingData {
-                    ContentUnavailableView {
-                        Label(appState.hasActiveFilters ? "No Results" : "Empty Table", systemImage: "tray")
-                    } description: {
-                        if appState.hasActiveFilters {
-                            Text("No rows match the current filters.")
-                        }
-                    } actions: {
-                        if appState.hasActiveFilters {
-                            Button("Clear Filters") {
-                                Task { await appState.clearAllFilters() }
-                            }
-                        }
-                    }
-                } else {
-                    DataGridView()
-                }
+                contentView
             case .structure:
                 if let table = appState.selectedTable {
                     TableStructureView(table: table)
@@ -140,8 +111,31 @@ struct TableContentArea: View {
                 DDLView()
             }
 
-            // Bottom bar — Postico-style
             BottomBar(tab: $tab)
+        }
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        if appState.isLoadingData && appState.queryResult.rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if appState.queryResult.rows.isEmpty && !appState.isLoadingData {
+            ContentUnavailableView {
+                Label(appState.hasActiveFilters ? "No Results" : "Empty Table", systemImage: "tray")
+            } description: {
+                if appState.hasActiveFilters {
+                    Text("No rows match the current filters.")
+                }
+            } actions: {
+                if appState.hasActiveFilters {
+                    Button("Clear Filters") {
+                        Task { await appState.clearAllFilters() }
+                    }
+                }
+            }
+        } else {
+            DataGridView()
         }
     }
 }
@@ -154,37 +148,11 @@ private struct BottomBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Content / Structure / DDL tabs
-            HStack(spacing: 0) {
-                ForEach(TableContentArea.ContentTab.allCases, id: \.self) { t in
-                    Button {
-                        tab = t
-                    } label: {
-                        Text(t.rawValue)
-                            .font(.system(size: 11, weight: tab == t ? .semibold : .regular))
-                            .foregroundStyle(tab == t ? .primary : .secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(tab == t ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            // + Row
-            Button {
-                appState.insertNewRow()
-            } label: {
-                Text("+ Row")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .padding(.leading, 8)
+            tabButtons
+            addRowButton
 
             Spacer()
 
-            // Row count
             if tab == .content && appState.queryResult.totalCount > 0 {
                 Text("\(appState.queryResult.totalCount) rows")
                     .font(.system(size: 11))
@@ -192,69 +160,16 @@ private struct BottomBar: View {
                     .padding(.trailing, 12)
             }
 
-            // Pending edits
             if appState.hasPendingEdits {
-                HStack(spacing: 6) {
-                    Button("Discard") {
-                        appState.discardEdits()
-                    }
-                    .controlSize(.small)
-
-                    Button("Save \(appState.pendingEdits.count) Change\(appState.pendingEdits.count == 1 ? "" : "s")") {
-                        Task { await appState.commitEdits() }
-                    }
-                    .controlSize(.small)
-                    .keyboardShortcut(.return, modifiers: [.command])
-                }
-                .padding(.trailing, 8)
+                editControls
             }
 
-            // Filter toggle button — stays blue when filter bar is open
             if tab == .content {
-                Button {
-                    appState.showFilterBar.toggle()
-                } label: {
-                    Text("Filter")
-                        .font(.system(size: 11, weight: appState.showFilterBar ? .semibold : .regular))
-                        .foregroundStyle(appState.showFilterBar || appState.hasActiveFilters ? .white : .secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            appState.showFilterBar || appState.hasActiveFilters
-                                ? Color.accentColor
-                                : .clear,
-                            in: RoundedRectangle(cornerRadius: 4)
-                        )
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 8)
+                filterToggle
             }
 
-            // Pagination
             if tab == .content && appState.queryResult.totalPages > 1 {
-                HStack(spacing: 4) {
-                    Button {
-                        Task { await appState.previousPage() }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 9))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(appState.currentPage <= 1)
-
-                    Text("Page \(appState.currentPage) of \(appState.queryResult.totalPages)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    Button {
-                        Task { await appState.nextPage() }
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!appState.queryResult.hasMore)
-                }
+                pagination
             }
         }
         .padding(.horizontal, 8)
@@ -262,9 +177,85 @@ private struct BottomBar: View {
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
     }
+
+    private var tabButtons: some View {
+        HStack(spacing: 0) {
+            ForEach(TableContentArea.ContentTab.allCases, id: \.self) { t in
+                Button { tab = t } label: {
+                    Text(t.rawValue)
+                        .font(.system(size: 11, weight: tab == t ? .semibold : .regular))
+                        .foregroundStyle(tab == t ? .primary : .secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(tab == t ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var addRowButton: some View {
+        Button { appState.insertNewRow() } label: {
+            Text("+ Row")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 8)
+    }
+
+    private var editControls: some View {
+        HStack(spacing: 6) {
+            Button("Discard") { appState.discardEdits() }
+                .controlSize(.small)
+
+            Button("Save \(appState.pendingEdits.count) Change\(appState.pendingEdits.count == 1 ? "" : "s")") {
+                Task { await appState.commitEdits() }
+            }
+            .controlSize(.small)
+            .keyboardShortcut(.return, modifiers: [.command])
+        }
+        .padding(.trailing, 8)
+    }
+
+    private var filterToggle: some View {
+        Button { appState.showFilterBar.toggle() } label: {
+            Text("Filter")
+                .font(.system(size: 11, weight: appState.showFilterBar ? .semibold : .regular))
+                .foregroundStyle(appState.showFilterBar || appState.hasActiveFilters ? .white : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    appState.showFilterBar || appState.hasActiveFilters ? Color.accentColor : .clear,
+                    in: RoundedRectangle(cornerRadius: 4)
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 8)
+    }
+
+    private var pagination: some View {
+        HStack(spacing: 4) {
+            Button { Task { await appState.previousPage() } } label: {
+                Image(systemName: "chevron.left").font(.system(size: 9))
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.currentPage <= 1)
+
+            Text("Page \(appState.currentPage) of \(appState.queryResult.totalPages)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            Button { Task { await appState.nextPage() } } label: {
+                Image(systemName: "chevron.right").font(.system(size: 9))
+            }
+            .buttonStyle(.plain)
+            .disabled(!appState.queryResult.hasMore)
+        }
+    }
 }
 
-// MARK: - DDL View (placeholder)
+// MARK: - DDL View
 
 private struct DDLView: View {
     @Environment(AppState.self) private var appState
@@ -299,7 +290,7 @@ private struct DDLView: View {
     }
 }
 
-// MARK: - Welcome
+// MARK: - Prompts
 
 struct WelcomeView: View {
     @Environment(AppState.self) private var appState
@@ -325,9 +316,7 @@ struct WelcomeView: View {
             .controlSize(.large)
 
             if !appState.savedConnections.isEmpty {
-                Divider()
-                    .frame(width: 200)
-                    .padding(.top, 8)
+                Divider().frame(width: 200).padding(.top, 8)
 
                 VStack(spacing: 4) {
                     ForEach(appState.savedConnections) { config in
@@ -361,8 +350,7 @@ struct SavedConnectionRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(config.name)
-                        .font(.system(size: 13))
+                    Text(config.name).font(.system(size: 13))
                     Text("\(config.host):\(config.port)/\(config.database)")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)

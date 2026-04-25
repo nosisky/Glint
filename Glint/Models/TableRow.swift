@@ -1,7 +1,5 @@
 import Foundation
 
-/// A generic representation of a database row.
-/// Uses ordered key-value pairs to preserve column order.
 struct TableRow: Identifiable, Hashable, Sendable {
     let id: UUID
     let values: [CellValue]
@@ -11,19 +9,17 @@ struct TableRow: Identifiable, Hashable, Sendable {
         self.values = values
     }
 
-    /// Get cell value by column index.
     subscript(index: Int) -> CellValue? {
         guard index >= 0 && index < values.count else { return nil }
         return values[index]
     }
 }
 
-/// A single cell value with its column context.
 struct CellValue: Hashable, Sendable {
     let columnName: String
-    let rawValue: String?       // nil = SQL NULL
-    let displayValue: String    // formatted for display
-    let dataType: String        // udtName
+    let rawValue: String?
+    let displayValue: String
+    let dataType: String
 
     var isNull: Bool { rawValue == nil }
 
@@ -35,7 +31,6 @@ struct CellValue: Hashable, Sendable {
     }
 }
 
-/// Pending cell edit — tracks uncommitted changes.
 struct PendingEdit: Identifiable, Hashable, Sendable {
     let id: UUID
     let rowId: UUID
@@ -63,7 +58,5 @@ struct PendingEdit: Identifiable, Hashable, Sendable {
         self.timestamp = timestamp
     }
 
-    var hasChanged: Bool {
-        originalValue != newValue
-    }
+    var hasChanged: Bool { originalValue != newValue }
 }

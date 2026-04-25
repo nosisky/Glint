@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Table structure inspector — shows columns with type awareness,
-/// FK relationships, enum values, and constraints.
 struct TableStructureView: View {
     let table: TableInfo
     @Environment(AppState.self) private var appState
@@ -26,18 +24,7 @@ struct TableStructureView: View {
 
                     TableColumn("Column") { col in
                         HStack(spacing: 5) {
-                            // Constraint indicators
-                            if col.isPrimaryKey {
-                                Text("PK")
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(.orange)
-                            }
-                            if col.isForeignKey {
-                                Text("FK")
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(.blue)
-                            }
-
+                            constraintBadge(col)
                             Text(col.name)
                                 .font(.system(size: 12))
                                 .fontWeight(col.isPrimaryKey ? .medium : .regular)
@@ -60,16 +47,11 @@ struct TableStructureView: View {
                     .width(min: 60, ideal: 80)
 
                     TableColumn("Default") { col in
-                        if let def = col.defaultValue {
-                            Text(def)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        } else {
-                            Text("—")
-                                .foregroundStyle(.quaternary)
-                        }
+                        Text(col.defaultValue ?? "—")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(col.defaultValue != nil ? .secondary : .quaternary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                     .width(min: 80, ideal: 160)
 
@@ -105,6 +87,20 @@ struct TableStructureView: View {
                 detailedTable = updated
             }
             isLoading = false
+        }
+    }
+
+    @ViewBuilder
+    private func constraintBadge(_ col: ColumnInfo) -> some View {
+        if col.isPrimaryKey {
+            Text("PK")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(.orange)
+        }
+        if col.isForeignKey {
+            Text("FK")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(.blue)
         }
     }
 }

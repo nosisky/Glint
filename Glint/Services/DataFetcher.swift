@@ -1,8 +1,6 @@
 import Foundation
 import PostgresNIO
 
-/// Service responsible for fetching paginated data from PostgreSQL.
-/// Uses the QueryBuilder to compile filters and handles row materialization.
 actor DataFetcher {
     private let connection: PostgresConnection
     private let queryBuilder = QueryBuilder()
@@ -11,7 +9,6 @@ actor DataFetcher {
         self.connection = connection
     }
 
-    /// Fetch rows with filters, global search, and pagination.
     func fetch(
         table: TableInfo,
         filters: [FilterConstraint] = [],
@@ -33,18 +30,10 @@ actor DataFetcher {
             offset: offset
         )
 
-        // Execute count query
         let totalCount = try await connection.queryScalar(countSQL)
-
-        // Execute data query
         let rawRows = try await connection.queryAll(sql)
-
-        // Build columns from actual SQL result — guarantees alignment with data
         let resultColumns = buildResultColumns(from: rawRows, tableColumns: table.columns)
-
-        // Materialize rows using result column order (not schema order)
         let rows = materializeRows(rawRows, columns: resultColumns)
-
         let executionTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
 
         return QueryResult(
@@ -60,81 +49,43 @@ actor DataFetcher {
 
     // MARK: - Column Discovery
 
-    /// Build ColumnInfo array from the actual SQL result to guarantee
-    /// that header columns and data cells are always in the same order.
     private func buildResultColumns(from pgRows: [PostgresRow], tableColumns: [ColumnInfo]) -> [ColumnInfo] {
         guard let firstRow = pgRows.first else { return tableColumns }
 
         let cells = firstRow.makeRandomAccess()
-        var result: [ColumnInfo] = []
-
-        for i in 0..<cells.count {
-            let cell = cells[i]
-            let name = cell.columnName
-
-            // Enrich with schema metadata if available
+        return (0..<cells.count).map { i in
+            let name = cells[i].columnName
             if let meta = tableColumns.first(where: { $0.name == name }) {
-                result.append(ColumnInfo(
-                    name: name,
-                    tableName: meta.tableName,
-                    dataType: meta.dataType,
-                    udtName: meta.udtName,
-                    isNullable: meta.isNullable,
-                    isPrimaryKey: meta.isPrimaryKey,
-                    hasDefault: meta.hasDefault,
-                    defaultValue: meta.defaultValue,
+                return ColumnInfo(
+                    name: name, tableName: meta.tableName,
+                    dataType: meta.dataType, udtName: meta.udtName,
+                    isNullable: meta.isNullable, isPrimaryKey: meta.isPrimaryKey,
+                    hasDefault: meta.hasDefault, defaultValue: meta.defaultValue,
                     characterMaxLength: meta.characterMaxLength,
                     numericPrecision: meta.numericPrecision,
                     ordinalPosition: i
-                ))
-            } else {
-                // Column not in schema metadata (expression, alias, etc.)
-                result.append(ColumnInfo(
-                    name: name,
-                    tableName: "",
-                    dataType: "text",
-                    udtName: "text",
-                    isNullable: true,
-                    isPrimaryKey: false,
-                    hasDefault: false,
-                    defaultValue: nil,
-                    characterMaxLength: nil,
-                    numericPrecision: nil,
-                    ordinalPosition: i
-                ))
+                )
             }
+            return ColumnInfo(
+                name: name, tableName: "", dataType: "text", udtName: "text",
+                isNullable: true, isPrimaryKey: false, hasDefault: false,
+                defaultValue: nil, characterMaxLength: nil, numericPrecision: nil,
+                ordinalPosition: i
+            )
         }
-
-        return result
     }
 
     // MARK: - Row Materialization
 
-    /// Convert PostgresNIO rows into our generic TableRow representation.
-    /// Iterates through the row's cells directly (not schema columns) to preserve alignment.
     private func materializeRows(_ pgRows: [PostgresRow], columns: [ColumnInfo]) -> [TableRow] {
         pgRows.map { pgRow in
-            let randomAccess = pgRow.makeRandomAccess()
-            var values: [CellValue] = []
-
-            for i in 0..<randomAccess.count {
-                let cell = randomAccess[i]
-                let colInfo = columns.indices.contains(i) ? columns[i] : nil
-                let rawValue: String?
-
-                if cell.bytes == nil {
-                    rawValue = nil
-                } else {
-                    rawValue = try? cell.decode(String.self)
-                }
-
-                values.append(CellValue(
-                    columnName: cell.columnName,
-                    rawValue: rawValue,
-                    dataType: colInfo?.udtName ?? "text"
-                ))
+            let cells = pgRow.makeRandomAccess()
+            let values = (0..<cells.count).map { i -> CellValue in
+                let cell = cells[i]
+                let rawValue: String? = cell.bytes == nil ? nil : (try? cell.decode(String.self))
+                let dataType = columns.indices.contains(i) ? columns[i].udtName : "text"
+                return CellValue(columnName: cell.columnName, rawValue: rawValue, dataType: dataType)
             }
-
             return TableRow(values: values)
         }
     }

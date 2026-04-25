@@ -1,8 +1,7 @@
 import Foundation
 
-/// Represents a PostgreSQL schema (e.g., "public").
 struct DatabaseSchemaInfo: Identifiable, Hashable, Sendable {
-    let id: String // schema name is the identity
+    let id: String
     let name: String
     var tables: [TableInfo]
 
@@ -13,12 +12,11 @@ struct DatabaseSchemaInfo: Identifiable, Hashable, Sendable {
     }
 }
 
-/// Represents a single table within a schema.
 struct TableInfo: Identifiable, Hashable, Sendable {
     var id: String { "\(schema).\(name)" }
     let schema: String
     let name: String
-    let type: TableType // table, view, materialized view
+    let type: TableType
     var columns: [ColumnInfo]
     var estimatedRowCount: Int64?
 
@@ -36,10 +34,7 @@ struct TableInfo: Identifiable, Hashable, Sendable {
         self.estimatedRowCount = estimatedRowCount
     }
 
-    /// Fully qualified name: "schema"."table"
-    var qualifiedName: String {
-        "\"\(schema)\".\"\(name)\""
-    }
+    var qualifiedName: String { "\"\(schema)\".\"\(name)\"" }
 }
 
 enum TableType: String, Hashable, Sendable {
@@ -56,13 +51,12 @@ enum TableType: String, Hashable, Sendable {
     }
 }
 
-/// Represents a single column within a table.
 struct ColumnInfo: Identifiable, Hashable, Sendable {
     var id: String { "\(tableName).\(name)" }
     let name: String
     let tableName: String
-    let dataType: String        // raw PG type name (e.g., "character varying")
-    let udtName: String         // underlying type (e.g., "varchar", "int4")
+    let dataType: String
+    let udtName: String
     let isNullable: Bool
     let isPrimaryKey: Bool
     let hasDefault: Bool
@@ -71,65 +65,45 @@ struct ColumnInfo: Identifiable, Hashable, Sendable {
     let numericPrecision: Int?
     let ordinalPosition: Int
 
-    // Schema intelligence
-    var enumValues: [String]?        // populated for enum types
-    var foreignKey: ForeignKeyRef?   // populated for FK columns
+    var enumValues: [String]?
+    var foreignKey: ForeignKeyRef?
 
-    /// Whether this column is text-searchable (for global search ILIKE).
     var isTextSearchable: Bool {
-        let textTypes: Set<String> = [
-            "varchar", "text", "char", "bpchar", "name",
-            "character varying", "character", "citext", "uuid"
-        ]
-        return textTypes.contains(udtName.lowercased())
-            || textTypes.contains(dataType.lowercased())
+        let types: Set<String> = ["varchar", "text", "char", "bpchar", "name", "character varying", "character", "citext", "uuid"]
+        return types.contains(udtName.lowercased()) || types.contains(dataType.lowercased())
     }
 
-    /// Whether this column is numeric (for range filters).
     var isNumeric: Bool {
-        let numericTypes: Set<String> = [
-            "int2", "int4", "int8", "float4", "float8",
-            "numeric", "decimal", "smallint", "integer",
-            "bigint", "real", "double precision", "serial",
-            "bigserial", "smallserial", "money"
+        let types: Set<String> = [
+            "int2", "int4", "int8", "float4", "float8", "numeric", "decimal",
+            "smallint", "integer", "bigint", "real", "double precision",
+            "serial", "bigserial", "smallserial", "money"
         ]
-        return numericTypes.contains(udtName.lowercased())
-            || numericTypes.contains(dataType.lowercased())
+        return types.contains(udtName.lowercased()) || types.contains(dataType.lowercased())
     }
 
-    /// Whether this column is a date/time type.
     var isTemporal: Bool {
-        let temporalTypes: Set<String> = [
-            "date", "time", "timetz", "timestamp", "timestamptz",
-            "interval"
-        ]
-        return temporalTypes.contains(udtName.lowercased())
+        let types: Set<String> = ["date", "time", "timetz", "timestamp", "timestamptz", "interval"]
+        return types.contains(udtName.lowercased())
     }
 
-    /// Whether this column is boolean.
     var isBoolean: Bool {
         udtName.lowercased() == "bool" || dataType.lowercased() == "boolean"
     }
 
-    /// Whether this is a user-defined enum type.
     var isEnum: Bool {
         dataType.lowercased() == "user-defined" && enumValues != nil
     }
 
-    /// Whether this column has a foreign key reference.
     var isForeignKey: Bool { foreignKey != nil }
 
-    /// Human-readable type label for display.
     var typeLabel: String {
         if isEnum { return udtName }
-        if let maxLen = characterMaxLength {
-            return "\(udtName)(\(maxLen))"
-        }
+        if let maxLen = characterMaxLength { return "\(udtName)(\(maxLen))" }
         return udtName
     }
 }
 
-/// Foreign key reference to another table's column.
 struct ForeignKeyRef: Hashable, Sendable {
     let constraintName: String
     let referencedTable: String

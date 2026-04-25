@@ -1,11 +1,9 @@
 import Foundation
 
-/// A single filter condition applied to a column.
-/// The QueryBuilder compiles an array of these into a WHERE clause.
 struct FilterConstraint: Identifiable, Hashable, Sendable {
     let id: UUID
     let columnName: String
-    let columnType: String  // udtName for type-aware SQL generation
+    let columnType: String
     let operation: FilterOperation
     let value: FilterValue
 
@@ -26,7 +24,6 @@ struct FilterConstraint: Identifiable, Hashable, Sendable {
     var displayValue: String { value.displayString }
 }
 
-/// Supported filter operations.
 enum FilterOperation: String, Hashable, Sendable, CaseIterable {
     case equals = "="
     case notEquals = "≠"
@@ -49,13 +46,10 @@ enum FilterOperation: String, Hashable, Sendable, CaseIterable {
         }
     }
 
-    /// Human-readable label for the popover UI.
     var displayLabel: String { rawValue }
-
     var symbol: String { rawValue }
 }
 
-/// Type-safe filter value container.
 enum FilterValue: Hashable, Sendable {
     case text(String)
     case number(Double)
@@ -64,19 +58,19 @@ enum FilterValue: Hashable, Sendable {
     case dateRange(from: Date, to: Date)
     case boolean(Bool)
     case list([String])
-    case none // for isNull / isNotNull
+    case none
 
     var displayString: String {
         switch self {
-        case .text(let s): return s
-        case .number(let n): return String(n)
-        case .range(let lo, let hi): return "\(lo) – \(hi)"
-        case .date(let d): return d.formatted(.dateTime.year().month().day())
+        case .text(let s): s
+        case .number(let n): String(n)
+        case .range(let lo, let hi): "\(lo) – \(hi)"
+        case .date(let d): d.formatted(.dateTime.year().month().day())
         case .dateRange(let from, let to):
-            return "\(from.formatted(.dateTime.month().day())) – \(to.formatted(.dateTime.month().day()))"
-        case .boolean(let b): return b ? "true" : "false"
-        case .list(let items): return items.joined(separator: ", ")
-        case .none: return "—"
+            "\(from.formatted(.dateTime.month().day())) – \(to.formatted(.dateTime.month().day()))"
+        case .boolean(let b): b ? "true" : "false"
+        case .list(let items): items.joined(separator: ", ")
+        case .none: "—"
         }
     }
 }

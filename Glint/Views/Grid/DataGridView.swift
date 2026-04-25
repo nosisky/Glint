@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 
-/// NSTableView-backed data grid with inline editing, enum pickers, and FK popovers.
 struct DataGridView: NSViewRepresentable {
     @Environment(AppState.self) var appState
 
@@ -16,410 +15,345 @@ struct DataGridView: NSViewRepresentable {
         let tableView = NSTableView()
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = true
-        tableView.allowsMultipleSelection = false
+        tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
         tableView.rowHeight = 24
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.gridStyleMask = [.solidVerticalGridLineMask]
-        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.2)
-        tableView.headerView = GlintTableHeaderView()
+        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.15)
+        tableView.headerView = NSTableHeaderView()
         tableView.cornerView = nil
         tableView.backgroundColor = .clear
         tableView.focusRingType = .none
 
         scrollView.documentView = tableView
-
         context.coordinator.tableView = tableView
-        context.coordinator.scrollView = scrollView
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let tableView = scrollView.documentView as? NSTableView else { return }
-        let coordinator = context.coordinator
+        let coord = context.coordinator
 
         let columns = appState.queryResult.columns
         let rows = appState.queryResult.rows
 
-        // Build enriched column map from selectedTable (has enum/FK info)
         var enrichedMap: [String: ColumnInfo] = [:]
         if let table = appState.selectedTable {
-            for col in table.columns {
-                enrichedMap[col.name] = col
-            }
+            for col in table.columns { enrichedMap[col.name] = col }
         }
 
-        // Update columns if changed
-        if coordinator.lastColumnIds != columns.map(\.name) {
-            for col in tableView.tableColumns.reversed() {
-                tableView.removeTableColumn(col)
-            }
-
-            for colInfo in columns {
-                let enriched = enrichedMap[colInfo.name] ?? colInfo
-                let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(colInfo.name))
-                col.title = colInfo.name
-
-                // Tooltip shows type + constraints
-                var tooltip = enriched.typeLabel
-                if !enriched.isNullable { tooltip += " NOT NULL" }
-                if enriched.isPrimaryKey { tooltip += " PRIMARY KEY" }
-                if let fk = enriched.foreignKey { tooltip += " → \(fk.referencedTable).\(fk.referencedColumn)" }
-                col.headerToolTip = tooltip
-
-                // Width
-                let nameWidth = max(CGFloat(colInfo.name.count) * 8 + 24, 80)
-                if enriched.isBoolean { col.width = 80; col.minWidth = 60 }
-                else if enriched.isNumeric { col.width = 100; col.minWidth = 60 }
-                else if enriched.isTemporal { col.width = 200; col.minWidth = 120 }
-                else { col.width = max(nameWidth, 140); col.minWidth = 80 }
-                col.maxWidth = 600
-                col.resizingMask = .userResizingMask
-
-                col.sortDescriptorPrototype = NSSortDescriptor(key: colInfo.name, ascending: true)
-                tableView.addTableColumn(col)
-            }
-
-            coordinator.lastColumnIds = columns.map(\.name)
-            coordinator.needsInitialSizing = true
+        if coord.lastColumnIds != columns.map(\.name) {
+            rebuildColumns(tableView: tableView, columns: columns, enriched: enrichedMap)
+            coord.lastColumnIds = columns.map(\.name)
+            coord.needsInitialSizing = true
         }
 
-        // Update data
-        coordinator.columns = columns
-        coordinator.enrichedColumns = enrichedMap
-        coordinator.rows = rows
-        coordinator.appState = appState
-        tableView.delegate = coordinator
-        tableView.dataSource = coordinator
+        coord.columns = columns
+        coord.enrichedColumns = enrichedMap
+        coord.rows = rows
+        coord.appState = appState
+        tableView.delegate = coord
+        tableView.dataSource = coord
         tableView.reloadData()
 
-        // Auto-resize columns to fit content
-        if coordinator.needsInitialSizing && !rows.isEmpty {
-            for (i, col) in tableView.tableColumns.enumerated() {
-                guard i < columns.count else { continue }
-                let headerWidth = CGFloat(columns[i].name.count) * 8 + 24
-                var maxDataWidth: CGFloat = 0
-                for row in rows.prefix(50) {
-                    if i < row.values.count {
-                        let cellWidth = CGFloat(row.values[i].displayValue.count) * 7.5 + 16
-                        maxDataWidth = max(maxDataWidth, cellWidth)
-                    }
-                }
-                col.width = max(headerWidth, min(maxDataWidth, 400))
-            }
-            coordinator.needsInitialSizing = false
+        if coord.needsInitialSizing && !rows.isEmpty {
+            autoSizeColumns(tableView: tableView, columns: columns, rows: rows)
+            coord.needsInitialSizing = false
         }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    func makeCoordinator() -> GridCoordinator {
+        GridCoordinator()
     }
 
-    // MARK: - Coordinator
+    // MARK: - Column Setup
 
-    @MainActor class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
-        var tableView: NSTableView?
-        var scrollView: NSScrollView?
-        var columns: [ColumnInfo] = []
-        var enrichedColumns: [String: ColumnInfo] = [:]
-        var rows: [TableRow] = []
-        var appState: AppState?
-        var lastColumnIds: [String] = []
-        var needsInitialSizing = true
+    private func rebuildColumns(tableView: NSTableView, columns: [ColumnInfo], enriched: [String: ColumnInfo]) {
+        for col in tableView.tableColumns.reversed() { tableView.removeTableColumn(col) }
 
-        func numberOfRows(in tableView: NSTableView) -> Int {
-            rows.count
+        for colInfo in columns {
+            let meta = enriched[colInfo.name] ?? colInfo
+            let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(colInfo.name))
+            col.title = colInfo.name
+            col.headerToolTip = columnTooltip(meta)
+            col.sortDescriptorPrototype = NSSortDescriptor(key: colInfo.name, ascending: true)
+            col.resizingMask = .userResizingMask
+            col.minWidth = 60
+            col.maxWidth = 600
+
+            if meta.isBoolean { col.width = 80 }
+            else if meta.isNumeric { col.width = 100 }
+            else if meta.isTemporal { col.width = 200 }
+            else { col.width = max(CGFloat(colInfo.name.count) * 8 + 24, 140) }
+
+            tableView.addTableColumn(col)
         }
+    }
 
-        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-            guard let tableColumn,
-                  let colIndex = tableView.tableColumns.firstIndex(of: tableColumn),
-                  row < rows.count,
-                  colIndex < rows[row].values.count
-            else { return nil }
-
-            let cell = rows[row].values[colIndex]
-            let colName = tableColumn.identifier.rawValue
-            let enriched = enrichedColumns[colName]
-            let pending = isPending(row: row, col: colIndex)
-
-            // Boolean column → popup button (TRUE/FALSE)
-            if enriched?.isBoolean == true {
-                return makeBooleanCell(cell: cell, row: row, colIndex: colIndex, pending: pending)
+    private func autoSizeColumns(tableView: NSTableView, columns: [ColumnInfo], rows: [TableRow]) {
+        for (i, col) in tableView.tableColumns.enumerated() where i < columns.count {
+            let headerWidth = CGFloat(columns[i].name.count) * 8 + 24
+            var maxDataWidth: CGFloat = 0
+            for row in rows.prefix(50) where i < row.values.count {
+                let w = CGFloat(row.values[i].displayValue.count) * 7.5 + 16
+                maxDataWidth = max(maxDataWidth, w)
             }
-
-            // Enum column → popup button with values
-            if let enumValues = enriched?.enumValues, !enumValues.isEmpty {
-                return makeEnumCell(cell: cell, row: row, colIndex: colIndex, enumValues: enumValues, pending: pending)
-            }
-
-            // FK column → text + link button
-            if let fk = enriched?.foreignKey {
-                return makeFKCell(cell: cell, row: row, colIndex: colIndex, fk: fk, pending: pending)
-            }
-
-            // Regular text cell → editable on double-click
-            return makeTextCell(cell: cell, row: row, colIndex: colIndex, pending: pending)
+            col.width = max(headerWidth, min(maxDataWidth, 400))
         }
+    }
 
-        func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-            guard let descriptor = tableView.sortDescriptors.first,
-                  let key = descriptor.key else { return }
-            Task { [weak self] in
-                await self?.appState?.toggleSort(column: key)
-            }
-        }
-
-        // MARK: - Text Field Delegate (inline editing)
-
-        func controlTextDidEndEditing(_ notification: Notification) {
-            guard let textField = notification.object as? NSTextField,
-                  let appState else { return }
-
-            let row = textField.tag / 10000
-            let col = textField.tag % 10000
-            let newValue = textField.stringValue
-
-            guard row < rows.count, col < rows[row].values.count else { return }
-            let cell = rows[row].values[col]
-            let originalValue = cell.rawValue
-
-            guard newValue != (originalValue ?? "") else { return }
-
-            appState.pendingEdits.append(PendingEdit(
-                rowId: rows[row].id,
-                columnIndex: col,
-                columnName: cell.columnName,
-                originalValue: originalValue,
-                newValue: newValue.isEmpty ? nil : newValue
-            ))
-        }
-
-        // MARK: - Cell Factories
-
-        private func makeTextCell(cell: CellValue, row: Int, colIndex: Int, pending: Bool) -> NSView {
-            let cellView = NSTableCellView()
-            let textField = NSTextField()
-            textField.stringValue = cell.displayValue
-            textField.isEditable = true
-            textField.isBordered = false
-            textField.drawsBackground = false
-            textField.font = cell.isNull ? .systemFont(ofSize: 12) : .monospacedSystemFont(ofSize: 12, weight: .regular)
-            textField.textColor = cell.isNull ? .tertiaryLabelColor : .labelColor
-            textField.lineBreakMode = .byTruncatingMiddle
-            textField.focusRingType = .none
-            textField.delegate = self
-            textField.tag = row * 10000 + colIndex
-            textField.translatesAutoresizingMaskIntoConstraints = false
-
-            cellView.addSubview(textField)
-            cellView.textField = textField
-            NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 6),
-                textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-            ])
-
-            applyPendingHighlight(cellView, pending: pending)
-            return cellView
-        }
-
-        private func makeBooleanCell(cell: CellValue, row: Int, colIndex: Int, pending: Bool) -> NSView {
-            let cellView = NSView()
-            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-            popup.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            popup.isBordered = false
-            popup.addItems(withTitles: ["TRUE", "FALSE"])
-
-            // Select current value
-            let current = cell.rawValue?.lowercased()
-            if current == "true" || current == "t" {
-                popup.selectItem(at: 0)
-            } else {
-                popup.selectItem(at: 1)
-            }
-
-            popup.tag = row * 10000 + colIndex
-            popup.target = self
-            popup.action = #selector(booleanChanged(_:))
-            popup.translatesAutoresizingMaskIntoConstraints = false
-
-            cellView.addSubview(popup)
-            NSLayoutConstraint.activate([
-                popup.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 2),
-                popup.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -2),
-                popup.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-            ])
-
-            applyPendingHighlight(cellView, pending: pending)
-            return cellView
-        }
-
-        private func makeEnumCell(cell: CellValue, row: Int, colIndex: Int, enumValues: [String], pending: Bool) -> NSView {
-            let cellView = NSView()
-            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-            popup.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            popup.isBordered = false
-            popup.addItems(withTitles: enumValues)
-
-            if let current = cell.rawValue {
-                popup.selectItem(withTitle: current)
-            }
-
-            popup.tag = row * 10000 + colIndex
-            popup.target = self
-            popup.action = #selector(enumChanged(_:))
-            popup.translatesAutoresizingMaskIntoConstraints = false
-
-            cellView.addSubview(popup)
-            NSLayoutConstraint.activate([
-                popup.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 2),
-                popup.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -2),
-                popup.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-            ])
-
-            applyPendingHighlight(cellView, pending: pending)
-            return cellView
-        }
-
-        private func makeFKCell(cell: CellValue, row: Int, colIndex: Int, fk: ForeignKeyRef, pending: Bool) -> NSView {
-            let cellView = NSView()
-
-            // Text showing the value
-            let textField = NSTextField()
-            textField.stringValue = cell.displayValue
-            textField.isEditable = true
-            textField.isBordered = false
-            textField.drawsBackground = false
-            textField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-            textField.textColor = cell.isNull ? .tertiaryLabelColor : .labelColor
-            textField.lineBreakMode = .byTruncatingMiddle
-            textField.focusRingType = .none
-            textField.delegate = self
-            textField.tag = row * 10000 + colIndex
-            textField.translatesAutoresizingMaskIntoConstraints = false
-
-            // FK link button
-            let linkButton = NSButton(title: "", target: self, action: #selector(fkClicked(_:)))
-            linkButton.image = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: "Open referenced row")
-            linkButton.imageScaling = .scaleProportionallyDown
-            linkButton.isBordered = false
-            linkButton.bezelStyle = .inline
-            linkButton.contentTintColor = .systemBlue
-            linkButton.tag = row * 10000 + colIndex
-            linkButton.toolTip = "→ \(fk.referencedTable).\(fk.referencedColumn)"
-            linkButton.translatesAutoresizingMaskIntoConstraints = false
-
-            cellView.addSubview(textField)
-            cellView.addSubview(linkButton)
-
-            NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 6),
-                textField.trailingAnchor.constraint(equalTo: linkButton.leadingAnchor, constant: -2),
-                textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                linkButton.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                linkButton.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                linkButton.widthAnchor.constraint(equalToConstant: 16),
-                linkButton.heightAnchor.constraint(equalToConstant: 16),
-            ])
-
-            applyPendingHighlight(cellView, pending: pending)
-            return cellView
-        }
-
-        // MARK: - Actions
-
-        @objc private func booleanChanged(_ sender: NSPopUpButton) {
-            let row = sender.tag / 10000
-            let col = sender.tag % 10000
-            guard row < rows.count, col < rows[row].values.count else { return }
-
-            let cell = rows[row].values[col]
-            let newValue = sender.titleOfSelectedItem ?? "FALSE"
-            guard newValue.lowercased() != (cell.rawValue ?? "").lowercased() else { return }
-
-            appState?.pendingEdits.append(PendingEdit(
-                rowId: rows[row].id,
-                columnIndex: col,
-                columnName: cell.columnName,
-                originalValue: cell.rawValue,
-                newValue: newValue.lowercased()
-            ))
-        }
-
-        @objc private func enumChanged(_ sender: NSPopUpButton) {
-            let row = sender.tag / 10000
-            let col = sender.tag % 10000
-            guard row < rows.count, col < rows[row].values.count else { return }
-
-            let cell = rows[row].values[col]
-            let newValue = sender.titleOfSelectedItem ?? ""
-            guard newValue != (cell.rawValue ?? "") else { return }
-
-            appState?.pendingEdits.append(PendingEdit(
-                rowId: rows[row].id,
-                columnIndex: col,
-                columnName: cell.columnName,
-                originalValue: cell.rawValue,
-                newValue: newValue
-            ))
-        }
-
-        @objc private func fkClicked(_ sender: NSButton) {
-            let row = sender.tag / 10000
-            let col = sender.tag % 10000
-            guard row < rows.count, col < rows[row].values.count else { return }
-
-            let cell = rows[row].values[col]
-            let colName = cell.columnName
-            guard let fk = enrichedColumns[colName]?.foreignKey,
-                  let value = cell.rawValue,
-                  let appState else { return }
-
-            // Navigate to the referenced table and filter by the FK value
-            Task {
-                for schema in appState.schemas {
-                    if let refTable = schema.tables.first(where: { $0.name == fk.referencedTable }) {
-                        await appState.selectTable(refTable)
-                        // Apply filter for the referenced column = FK value
-                        appState.filters = [FilterConstraint(
-                            columnName: fk.referencedColumn,
-                            columnType: "text",
-                            operation: .equals,
-                            value: .text(value)
-                        )]
-                        await appState.fetchTableData()
-                        break
-                    }
-                }
-            }
-        }
-
-        // MARK: - Helpers
-
-        private func isPending(row: Int, col: Int) -> Bool {
-            guard row < rows.count else { return false }
-            let rowId = rows[row].id
-            return appState?.pendingEdits.contains { $0.rowId == rowId && $0.columnIndex == col } ?? false
-        }
-
-        private func applyPendingHighlight(_ view: NSView, pending: Bool) {
-            view.wantsLayer = true
-            view.layer?.backgroundColor = pending
-                ? NSColor.systemYellow.withAlphaComponent(0.12).cgColor
-                : nil
-        }
+    private func columnTooltip(_ col: ColumnInfo) -> String {
+        var parts = [col.typeLabel]
+        if !col.isNullable { parts.append("NOT NULL") }
+        if col.isPrimaryKey { parts.append("PK") }
+        if let fk = col.foreignKey { parts.append("→ \(fk.referencedTable).\(fk.referencedColumn)") }
+        if let vals = col.enumValues { parts.append("[\(vals.joined(separator: ", "))]") }
+        return parts.joined(separator: " · ")
     }
 }
 
-// MARK: - Custom Header View
+// MARK: - Coordinator
 
-private class GlintTableHeaderView: NSTableHeaderView {
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        dirtyRect.fill()
-        super.draw(dirtyRect)
+@MainActor
+final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+    weak var tableView: NSTableView?
+    var columns: [ColumnInfo] = []
+    var enrichedColumns: [String: ColumnInfo] = [:]
+    var rows: [TableRow] = []
+    weak var appState: AppState?
+    var lastColumnIds: [String] = []
+    var needsInitialSizing = true
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard let tableColumn,
+              let colIndex = tableView.tableColumns.firstIndex(of: tableColumn),
+              row < rows.count,
+              colIndex < rows[row].values.count
+        else { return nil }
+
+        let cell = rows[row].values[colIndex]
+        let colName = tableColumn.identifier.rawValue
+        let meta = enrichedColumns[colName]
+        let pending = hasPendingEdit(row: row, col: colIndex)
+
+        if meta?.isBoolean == true {
+            return CellFactory.boolean(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
+        }
+        if let enumValues = meta?.enumValues, !enumValues.isEmpty {
+            return CellFactory.enumPicker(cell: cell, row: row, col: colIndex, values: enumValues, pending: pending, delegate: self)
+        }
+        if let fk = meta?.foreignKey {
+            return CellFactory.foreignKey(cell: cell, row: row, col: colIndex, fk: fk, pending: pending, delegate: self)
+        }
+        return CellFactory.text(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
+    }
+
+    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        guard let key = tableView.sortDescriptors.first?.key else { return }
+        Task { [weak self] in await self?.appState?.toggleSort(column: key) }
+    }
+
+    // MARK: - NSTextFieldDelegate
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let textField = notification.object as? NSTextField else { return }
+        let (row, col) = CellFactory.decodeTag(textField.tag)
+        guard row < rows.count, col < rows[row].values.count else { return }
+
+        let cell = rows[row].values[col]
+        let newValue = textField.stringValue
+        guard newValue != (cell.rawValue ?? "") else { return }
+
+        recordEdit(row: row, col: col, cell: cell, newValue: newValue.isEmpty ? nil : newValue)
+    }
+
+    // MARK: - Actions
+
+    @objc func popupChanged(_ sender: NSPopUpButton) {
+        let (row, col) = CellFactory.decodeTag(sender.tag)
+        guard row < rows.count, col < rows[row].values.count else { return }
+
+        let cell = rows[row].values[col]
+        let newValue = sender.titleOfSelectedItem ?? ""
+        guard newValue != (cell.rawValue ?? "") else { return }
+
+        recordEdit(row: row, col: col, cell: cell, newValue: newValue)
+    }
+
+    @objc func fkLinkClicked(_ sender: NSButton) {
+        let (row, col) = CellFactory.decodeTag(sender.tag)
+        guard row < rows.count, col < rows[row].values.count else { return }
+
+        let cell = rows[row].values[col]
+        guard let fk = enrichedColumns[cell.columnName]?.foreignKey,
+              let value = cell.rawValue,
+              let appState else { return }
+
+        Task {
+            for schema in appState.schemas {
+                if let refTable = schema.tables.first(where: { $0.name == fk.referencedTable }) {
+                    await appState.selectTable(refTable)
+                    appState.filters = [FilterConstraint(
+                        columnName: fk.referencedColumn,
+                        columnType: "text",
+                        operation: .equals,
+                        value: .text(value)
+                    )]
+                    await appState.fetchTableData()
+                    return
+                }
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func hasPendingEdit(row: Int, col: Int) -> Bool {
+        guard row < rows.count else { return false }
+        let rowId = rows[row].id
+        return appState?.pendingEdits.contains { $0.rowId == rowId && $0.columnIndex == col } ?? false
+    }
+
+    private func recordEdit(row: Int, col: Int, cell: CellValue, newValue: String?) {
+        appState?.pendingEdits.append(PendingEdit(
+            rowId: rows[row].id,
+            columnIndex: col,
+            columnName: cell.columnName,
+            originalValue: cell.rawValue,
+            newValue: newValue
+        ))
+    }
+}
+
+// MARK: - Cell Factory
+
+enum CellFactory {
+    static func encodeTag(row: Int, col: Int) -> Int { row * 10000 + col }
+    static func decodeTag(_ tag: Int) -> (row: Int, col: Int) { (tag / 10000, tag % 10000) }
+
+    static func text(cell: CellValue, row: Int, col: Int, pending: Bool, delegate: NSTextFieldDelegate) -> NSView {
+        let view = NSTableCellView()
+        let field = editableTextField(cell: cell, row: row, col: col, delegate: delegate)
+        view.addSubview(field)
+        view.textField = field
+        pinTextField(field, in: view)
+        applyPendingStyle(view, pending: pending)
+        return view
+    }
+
+    static func boolean(cell: CellValue, row: Int, col: Int, pending: Bool, delegate: GridCoordinator) -> NSView {
+        let view = NSView()
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        popup.isBordered = false
+        popup.addItems(withTitles: ["TRUE", "FALSE"])
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.tag = encodeTag(row: row, col: col)
+        popup.target = delegate
+        popup.action = #selector(GridCoordinator.popupChanged(_:))
+
+        let current = cell.rawValue?.lowercased()
+        popup.selectItem(at: (current == "true" || current == "t") ? 0 : 1)
+
+        view.addSubview(popup)
+        pinPopup(popup, in: view)
+        applyPendingStyle(view, pending: pending)
+        return view
+    }
+
+    static func enumPicker(cell: CellValue, row: Int, col: Int, values: [String], pending: Bool, delegate: GridCoordinator) -> NSView {
+        let view = NSView()
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        popup.isBordered = false
+        popup.addItems(withTitles: values)
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.tag = encodeTag(row: row, col: col)
+        popup.target = delegate
+        popup.action = #selector(GridCoordinator.popupChanged(_:))
+
+        if let current = cell.rawValue { popup.selectItem(withTitle: current) }
+
+        view.addSubview(popup)
+        pinPopup(popup, in: view)
+        applyPendingStyle(view, pending: pending)
+        return view
+    }
+
+    static func foreignKey(cell: CellValue, row: Int, col: Int, fk: ForeignKeyRef, pending: Bool, delegate: GridCoordinator) -> NSView {
+        let view = NSView()
+
+        let field = editableTextField(cell: cell, row: row, col: col, delegate: delegate)
+        view.addSubview(field)
+
+        let link = NSButton(title: "", target: delegate, action: #selector(GridCoordinator.fkLinkClicked(_:)))
+        link.image = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: nil)
+        link.imageScaling = .scaleProportionallyDown
+        link.isBordered = false
+        link.bezelStyle = .inline
+        link.contentTintColor = .systemBlue
+        link.tag = encodeTag(row: row, col: col)
+        link.toolTip = "→ \(fk.referencedTable).\(fk.referencedColumn)"
+        link.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(link)
+
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            field.trailingAnchor.constraint(equalTo: link.leadingAnchor, constant: -2),
+            field.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            link.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            link.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            link.widthAnchor.constraint(equalToConstant: 16),
+            link.heightAnchor.constraint(equalToConstant: 16),
+        ])
+
+        applyPendingStyle(view, pending: pending)
+        return view
+    }
+
+    // MARK: - Shared Components
+
+    private static func editableTextField(cell: CellValue, row: Int, col: Int, delegate: NSTextFieldDelegate) -> NSTextField {
+        let field = NSTextField()
+        field.stringValue = cell.displayValue
+        field.isEditable = true
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.lineBreakMode = .byTruncatingMiddle
+        field.font = cell.isNull ? .systemFont(ofSize: 12) : .monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.textColor = cell.isNull ? .tertiaryLabelColor : .labelColor
+        field.delegate = delegate
+        field.tag = encodeTag(row: row, col: col)
+        field.translatesAutoresizingMaskIntoConstraints = false
+        return field
+    }
+
+    private static func pinTextField(_ field: NSTextField, in parent: NSView) {
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: 6),
+            field.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -4),
+            field.centerYAnchor.constraint(equalTo: parent.centerYAnchor),
+        ])
+    }
+
+    private static func pinPopup(_ popup: NSPopUpButton, in parent: NSView) {
+        NSLayoutConstraint.activate([
+            popup.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: 2),
+            popup.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -2),
+            popup.centerYAnchor.constraint(equalTo: parent.centerYAnchor),
+        ])
+    }
+
+    private static func applyPendingStyle(_ view: NSView, pending: Bool) {
+        guard pending else { return }
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.12).cgColor
     }
 }
