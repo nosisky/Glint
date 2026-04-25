@@ -25,7 +25,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 if appState.isConnected {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 6) {
                         if appState.databases.count > 1 {
                             Picker("", selection: Binding(
                                 get: { appState.currentDatabase },
@@ -36,20 +36,24 @@ struct ContentView: View {
                                 }
                             }
                             .labelsHidden()
-                            .frame(minWidth: 120)
+                            .fixedSize()
                         } else {
                             Text(appState.currentDatabase)
-                                .font(.system(size: 13))
+                                .font(.system(size: 13, weight: .medium))
                         }
 
                         if appState.isConnecting {
                             ProgressView().controlSize(.small)
                         } else {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 6, height: 6)
                             Text("Connected")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .fixedSize()
                 }
             }
 

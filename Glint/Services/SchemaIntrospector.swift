@@ -206,6 +206,77 @@ actor SchemaIntrospector {
         return try await connection.queryScalar("SELECT count(*) FROM \(qTable)")
     }
 
+    // MARK: - Indexes
+
+    struct IndexResult: Sendable {
+        let name: String
+        let isUnique: Bool
+        let isPrimary: Bool
+        let definition: String
+        let columns: [String]
+    }
+
+    func fetchIndexes(schema: String, table: String) async throws -> [IndexResult] {
+        let rows = try await connection.queryAll("""
+            SELECT i.relname AS index_name,
+                   ix.indisunique AS is_unique,
+                   ix.indisprimary AS is_primary,
+                   pg_get_indexdef(ix.indexrelid) AS index_def,
+                   array_to_string(ARRAY(
+                       SELECT a.attname FROM unnest(ix.indkey) AS k(n)
+                       JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.n
+                   ), ',') AS columns
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_class t ON t.oid = ix.indrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE n.nspname = \(SQLSanitizer.quoteLiteral(schema))
+              AND t.relname = \(SQLSanitizer.quoteLiteral(table))
+            ORDER BY ix.indisprimary DESC, i.relname
+            """)
+
+        return rows.compactMap { row -> IndexResult? in
+            let cols = row.makeRandomAccess()
+            guard let name = try? cols[0].decode(String.self),
+                  let isUnique = try? cols[1].decode(Bool.self),
+                  let isPrimary = try? cols[2].decode(Bool.self),
+                  let definition = try? cols[3].decode(String.self),
+                  let columnStr = try? cols[4].decode(String.self)
+            else { return nil }
+            return IndexResult(
+                name: name, isUnique: isUnique, isPrimary: isPrimary,
+                definition: definition,
+                columns: columnStr.split(separator: ",").map(String.init)
+            )
+        }
+    }
+
+    // MARK: - Table Metadata
+
+    struct TableMeta: Sendable {
+        let tablespace: String
+        let isTemporary: Bool
+    }
+
+    func fetchTableMeta(schema: String, table: String) async throws -> TableMeta {
+        let rows = try await connection.queryAll("""
+            SELECT COALESCE(t.tablespace, 'pg_default') AS tablespace,
+                   c.relpersistence = 't' AS is_temporary
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+            WHERE n.nspname = \(SQLSanitizer.quoteLiteral(schema))
+              AND c.relname = \(SQLSanitizer.quoteLiteral(table))
+            """)
+        guard let row = rows.first else {
+            return TableMeta(tablespace: "pg_default", isTemporary: false)
+        }
+        let cols = row.makeRandomAccess()
+        let tablespace = (try? cols[0].decode(String.self)) ?? "pg_default"
+        let isTemporary = (try? cols[1].decode(Bool.self)) ?? false
+        return TableMeta(tablespace: tablespace, isTemporary: isTemporary)
+    }
+
     // MARK: - Enrichment Helpers
 
     private func enrichWithEnums(_ columns: inout [ColumnInfo], enums: [String: [String]]) {
