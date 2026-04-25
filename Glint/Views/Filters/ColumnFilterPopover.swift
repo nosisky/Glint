@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Column filter popover — shown when clicking a column header's filter icon.
-/// Contains distinct values list and logic toggles.
+/// Column filter popover — shown from column header.
 struct ColumnFilterPopover: View {
     let column: ColumnInfo
     @Environment(AppState.self) private var appState
@@ -17,141 +16,108 @@ struct ColumnFilterPopover: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
-                Image(systemName: column.typeIcon)
-                    .foregroundStyle(GlintDesign.gold)
                 Text(column.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .medium))
                 Spacer()
                 Text(column.dataType)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
-            .padding(GlintDesign.spacingMD)
-            .background(.bar)
+            .padding(12)
 
             Divider()
 
-            // Operation picker
-            VStack(alignment: .leading, spacing: GlintDesign.spacingSM) {
-                Text("Condition")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-
-                Picker("", selection: $selectedOperation) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Operation
+                Picker("Condition", selection: $selectedOperation) {
                     ForEach(availableOperations, id: \.self) { op in
                         Text(op.displayLabel).tag(op)
                     }
                 }
                 .pickerStyle(.menu)
-                .labelsHidden()
-            }
-            .padding(GlintDesign.spacingMD)
 
-            // Value input
-            if selectedOperation.requiresValue {
-                VStack(alignment: .leading, spacing: GlintDesign.spacingSM) {
+                // Value
+                if selectedOperation.requiresValue {
                     if selectedOperation == .between {
                         HStack {
                             TextField("Min", text: $rangeMin)
                                 .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 12, design: .monospaced))
-                            Text("–")
-                                .foregroundStyle(.secondary)
+                            Text("–").foregroundStyle(.secondary)
                             TextField("Max", text: $rangeMax)
                                 .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 12, design: .monospaced))
                         }
                     } else {
                         TextField("Value…", text: $filterText)
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12, design: .monospaced))
                     }
                 }
-                .padding(.horizontal, GlintDesign.spacingMD)
             }
+            .padding(12)
 
             Divider()
-                .padding(.vertical, GlintDesign.spacingSM)
 
             // Distinct values
-            VStack(alignment: .leading, spacing: GlintDesign.spacingSM) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Unique Values")
+                    Text("Values")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
-                        .tracking(0.5)
                     Spacer()
                     if isLoadingDistinct {
-                        ProgressView()
-                            .controlSize(.mini)
+                        ProgressView().controlSize(.mini)
                     }
                 }
 
-                TextField("Filter values…", text: $searchDistinct)
+                TextField("Search…", text: $searchDistinct)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
 
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(filteredDistinctValues, id: \.self) { value in
                             Button {
                                 filterText = value ?? ""
-                                selectedOperation = .equals
+                                selectedOperation = value == nil ? .isNull : .equals
                             } label: {
                                 Text(value ?? "NULL")
                                     .font(.system(size: 12, design: .monospaced))
-                                    .foregroundStyle(value == nil ? GlintDesign.nullValue : .primary)
+                                    .foregroundStyle(value == nil ? GlintDesign.nullText : .primary)
                                     .italic(value == nil)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, GlintDesign.spacingSM)
+                                    .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .fill(Color.primary.opacity(0.001)) // hit target
-                                    )
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
                     }
                 }
-                .frame(maxHeight: 180)
+                .frame(maxHeight: 160)
             }
-            .padding(.horizontal, GlintDesign.spacingMD)
+            .padding(12)
 
             Divider()
-                .padding(.vertical, GlintDesign.spacingSM)
 
             // Actions
             HStack {
                 Button("Clear") {
-                    // Remove any existing filter for this column
                     Task {
-                        let existing = appState.filters.filter { $0.columnName == column.name }
-                        for f in existing {
+                        for f in appState.filters where f.columnName == column.name {
                             await appState.removeFilter(f.id)
                         }
                     }
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
 
                 Spacer()
 
-                Button("Apply") {
-                    applyFilter()
-                }
-                .buttonStyle(GlintButtonStyle(isPrimary: true))
-                .disabled(!canApply)
+                Button("Apply") { applyFilter() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canApply)
             }
-            .padding(GlintDesign.spacingMD)
+            .padding(12)
         }
-        .frame(width: 280)
-        .task {
-            await loadDistinctValues()
-        }
+        .frame(width: 260)
+        .task { await loadDistinctValues() }
     }
 
     // MARK: - Helpers
@@ -189,42 +155,31 @@ struct ColumnFilterPopover: View {
             let conn = try await pool.getConnection()
             let introspector = SchemaIntrospector(connection: conn)
             distinctValues = try await introspector.fetchDistinctValues(
-                schema: table.schema,
-                table: table.name,
-                column: column.name
+                schema: table.schema, table: table.name, column: column.name
             )
-        } catch {
-            distinctValues = []
-        }
+        } catch { distinctValues = [] }
         isLoadingDistinct = false
     }
 
     private func applyFilter() {
         let value: FilterValue
         switch selectedOperation {
-        case .isNull, .isNotNull:
-            value = .none
+        case .isNull, .isNotNull: value = .none
         case .between:
             if let lo = Double(rangeMin), let hi = Double(rangeMax) {
                 value = .range(low: lo, high: hi)
             } else { return }
         default:
-            if column.isNumeric, let num = Double(filterText) {
-                value = .number(num)
-            } else if column.isBoolean {
-                value = .boolean(filterText.lowercased() == "true")
-            } else {
-                value = .text(filterText)
-            }
+            if column.isNumeric, let num = Double(filterText) { value = .number(num) }
+            else if column.isBoolean { value = .boolean(filterText.lowercased() == "true") }
+            else { value = .text(filterText) }
         }
 
-        let constraint = FilterConstraint(
-            columnName: column.name,
-            columnType: column.udtName,
-            operation: selectedOperation,
-            value: value
-        )
-
-        Task { await appState.addFilter(constraint) }
+        Task {
+            await appState.addFilter(FilterConstraint(
+                columnName: column.name, columnType: column.udtName,
+                operation: selectedOperation, value: value
+            ))
+        }
     }
 }

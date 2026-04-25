@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// New/Edit connection form sheet.
-/// Uses manual layout instead of Form to avoid macOS focus issues in sheets.
+/// Connection form — simple, native-feeling.
 struct ConnectionSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -9,115 +8,81 @@ struct ConnectionSheet: View {
     @State private var password = ""
     @State private var portString = "5432"
     @State private var isTesting = false
-    @State private var testResult: TestResult?
-
-    enum TestResult {
-        case success(String)
-        case failure(String)
-    }
+    @State private var testResult: String?
+    @State private var testSuccess = false
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                Text("New Connection")
-                    .font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(GlintDesign.spacingLG)
+            Text("New Connection")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
 
             Divider()
 
-            // Form fields (manual layout for reliable text editing on macOS)
-            ScrollView {
-                VStack(spacing: GlintDesign.spacingXL) {
-                    // Connection section
-                    FormSection(title: "Connection") {
-                        FormField(label: "Name") {
-                            NativeTextField(text: $config.name, placeholder: "My Database")
-                                .frame(height: 24)
-                        }
-                        FormField(label: "Host") {
-                            NativeTextField(text: $config.host, placeholder: "localhost")
-                                .frame(height: 24)
-                        }
-                        FormField(label: "Port") {
-                            NativeTextField(text: $portString, placeholder: "5432")
-                                .frame(height: 24)
-                                .onChange(of: portString) { _, newValue in
-                                    config.port = Int(newValue) ?? 5432
-                                }
-                        }
-                        FormField(label: "Database") {
-                            NativeTextField(text: $config.database, placeholder: "postgres")
-                                .frame(height: 24)
-                        }
-                    }
-
-                    // Authentication section
-                    FormSection(title: "Authentication") {
-                        FormField(label: "User") {
-                            NativeTextField(text: $config.user, placeholder: "postgres")
-                                .frame(height: 24)
-                        }
-                        FormField(label: "Password") {
-                            NativeSecureField(text: $password, placeholder: "Password")
-                                .frame(height: 24)
-                        }
-                    }
-
-                    // Options section
-                    FormSection(title: "Options") {
-                        FormField(label: "SSL") {
-                            Toggle("Use SSL", isOn: $config.useSSL)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                        }
-                        FormField(label: "Color Tag") {
-                            Picker("", selection: $config.colorTag) {
-                                ForEach(ColorTag.allCases, id: \.self) { tag in
-                                    HStack(spacing: 6) {
-                                        if tag != .none {
-                                            Circle()
-                                                .fill(GlintDesign.tagColor(tag))
-                                                .frame(width: 8, height: 8)
-                                        }
-                                        Text(tag.displayName)
-                                    }
-                                    .tag(tag)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 140)
-                        }
-                    }
+            // Fields
+            Grid(alignment: .trailing, verticalSpacing: 10) {
+                GridRow {
+                    Text("Name").gridColumnAlignment(.trailing)
+                    NativeTextField(text: $config.name, placeholder: "My Database")
+                        .frame(height: 22)
                 }
-                .padding(GlintDesign.spacingLG)
+                GridRow {
+                    Text("Host")
+                    NativeTextField(text: $config.host, placeholder: "localhost")
+                        .frame(height: 22)
+                }
+                GridRow {
+                    Text("Port")
+                    NativeTextField(text: $portString, placeholder: "5432")
+                        .frame(height: 22)
+                        .frame(width: 100)
+                        .gridColumnAlignment(.leading)
+                        .onChange(of: portString) { _, v in config.port = Int(v) ?? 5432 }
+                }
+                GridRow {
+                    Text("Database")
+                    NativeTextField(text: $config.database, placeholder: "postgres")
+                        .frame(height: 22)
+                }
+
+                Divider()
+                    .gridCellUnsizedAxes(.horizontal)
+                    .padding(.vertical, 4)
+
+                GridRow {
+                    Text("User")
+                    NativeTextField(text: $config.user, placeholder: "postgres")
+                        .frame(height: 22)
+                }
+                GridRow {
+                    Text("Password")
+                    NativeSecureField(text: $password, placeholder: "")
+                        .frame(height: 22)
+                }
+
+                GridRow {
+                    Text("")
+                    Toggle("Use SSL", isOn: $config.useSSL)
+                        .toggleStyle(.checkbox)
+                }
             }
+            .font(.system(size: 13))
+            .padding(20)
 
             // Test result
             if let result = testResult {
-                HStack(spacing: GlintDesign.spacingSM) {
-                    switch result {
-                    case .success(let msg):
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(GlintDesign.success)
-                        Text(msg).font(.system(size: 12)).foregroundStyle(GlintDesign.success)
-                    case .failure(let msg):
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(GlintDesign.error)
-                        Text(msg).font(.system(size: 12)).foregroundStyle(GlintDesign.error).lineLimit(2)
-                    }
+                HStack(spacing: 6) {
+                    Image(systemName: testSuccess ? "checkmark.circle" : "xmark.circle")
+                        .foregroundStyle(testSuccess ? .green : .red)
+                    Text(result)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
-                .padding(.horizontal, GlintDesign.spacingLG)
-                .padding(.bottom, GlintDesign.spacingSM)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
             }
 
             Divider()
@@ -125,11 +90,11 @@ struct ConnectionSheet: View {
             // Actions
             HStack {
                 Button("Test Connection") { testConnection() }
-                    .buttonStyle(GlintButtonStyle())
                     .disabled(isTesting)
 
                 if isTesting {
-                    ProgressView().controlSize(.small)
+                    ProgressView()
+                        .controlSize(.small)
                 }
 
                 Spacer()
@@ -137,17 +102,14 @@ struct ConnectionSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
 
-                Button("Save & Connect") { saveAndConnect() }
-                    .buttonStyle(GlintButtonStyle(isPrimary: true))
+                Button("Connect") { saveAndConnect() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(GlintDesign.spacingLG)
+            .padding()
         }
-        .frame(width: 480, height: 560)
-        .animation(GlintDesign.smooth, value: testResult != nil)
-        .onAppear {
-            portString = "\(config.port)"
-        }
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
+        .onAppear { portString = "\(config.port)" }
     }
 
     private func testConnection() {
@@ -158,9 +120,11 @@ struct ConnectionSheet: View {
                 let conn = PostgresConnection(config: config, password: password)
                 try await conn.connect()
                 await conn.disconnect()
-                testResult = .success("Connection successful!")
+                testResult = "Connection successful"
+                testSuccess = true
             } catch {
-                testResult = .failure(error.localizedDescription)
+                testResult = error.localizedDescription
+                testSuccess = false
             }
             isTesting = false
         }
@@ -170,53 +134,5 @@ struct ConnectionSheet: View {
         appState.addConnection(config)
         dismiss()
         Task { await appState.connect(config: config, password: password) }
-    }
-}
-
-// MARK: - Form Components
-
-/// A labeled section with a title and grouped content.
-private struct FormSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: GlintDesign.spacingSM) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.5)
-
-            VStack(spacing: GlintDesign.spacingSM) {
-                content
-            }
-            .padding(GlintDesign.spacingMD)
-            .background(
-                RoundedRectangle(cornerRadius: GlintDesign.cornerRadiusLG)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: GlintDesign.cornerRadiusLG)
-                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-                    )
-            )
-        }
-    }
-}
-
-/// A single form row with a label and control.
-private struct FormField<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(alignment: .center) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(.primary)
-                .frame(width: 80, alignment: .trailing)
-
-            content
-        }
     }
 }

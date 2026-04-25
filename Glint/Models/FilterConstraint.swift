@@ -22,6 +22,8 @@ struct FilterConstraint: Identifiable, Hashable, Sendable {
         self.operation = operation
         self.value = value
     }
+
+    var displayValue: String { value.displayString }
 }
 
 /// Supported filter operations.
@@ -49,6 +51,8 @@ enum FilterOperation: String, Hashable, Sendable, CaseIterable {
 
     /// Human-readable label for the popover UI.
     var displayLabel: String { rawValue }
+
+    var symbol: String { rawValue }
 }
 
 /// Type-safe filter value container.
