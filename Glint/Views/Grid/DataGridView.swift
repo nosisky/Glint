@@ -1,87 +1,90 @@
 import SwiftUI
 
-/// Data grid — fills full width, columns auto-sized.
+/// Data grid — fills full width and height, columns auto-sized, content pinned to top.
 struct DataGridView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        Group {
-            if appState.isLoadingData && appState.queryResult.rows.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if appState.queryResult.rows.isEmpty {
-                ContentUnavailableView {
-                    Label(appState.hasActiveFilters ? "No Results" : "Empty Table", systemImage: "tray")
-                } description: {
-                    if appState.hasActiveFilters {
-                        Text("No rows match the current filters.")
-                    }
-                } actions: {
-                    if appState.hasActiveFilters {
-                        Button("Clear Filters") {
-                            Task { await appState.clearAllFilters() }
-                        }
+        if appState.isLoadingData && appState.queryResult.rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if appState.queryResult.rows.isEmpty && !appState.isLoadingData {
+            ContentUnavailableView {
+                Label(appState.hasActiveFilters ? "No Results" : "Empty Table", systemImage: "tray")
+            } description: {
+                if appState.hasActiveFilters {
+                    Text("No rows match the current filters.")
+                }
+            } actions: {
+                if appState.hasActiveFilters {
+                    Button("Clear Filters") {
+                        Task { await appState.clearAllFilters() }
                     }
                 }
-            } else {
-                GeometryReader { geo in
-                    let columns = appState.queryResult.columns
-                    let widths = calculateColumnWidths(columns: columns, available: geo.size.width)
-                    let totalWidth = widths.reduce(0, +) + CGFloat(max(columns.count - 1, 0)) // +1px per separator
+            }
+        } else {
+            GeometryReader { geo in
+                let columns = appState.queryResult.columns
+                let widths = calculateColumnWidths(columns: columns, available: geo.size.width)
+                let totalWidth = widths.reduce(0, +) + CGFloat(max(columns.count - 1, 0))
 
-                    ScrollView([.horizontal, .vertical]) {
-                        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                            Section {
-                                ForEach(Array(appState.queryResult.rows.enumerated()), id: \.element.id) { index, row in
-                                    RowView(row: row, widths: widths, index: index)
-                                }
-                            } header: {
-                                HeaderView(columns: columns, widths: widths)
-                            }
+                ScrollView([.horizontal, .vertical]) {
+                    VStack(spacing: 0) {
+                        // Header
+                        HeaderView(columns: columns, widths: widths)
+
+                        // Data rows
+                        ForEach(Array(appState.queryResult.rows.enumerated()), id: \.element.id) { index, row in
+                            RowView(row: row, widths: widths, index: index)
                         }
-                        .frame(minWidth: totalWidth, alignment: .topLeading)
+
+                        // Empty grid lines — fill remaining space like Postico
+                        let rowsDrawn = appState.queryResult.rows.count
+                        let rowHeight: CGFloat = 22
+                        let headerHeight: CGFloat = 24
+                        let usedHeight = headerHeight + CGFloat(rowsDrawn) * rowHeight
+                        let remaining = max(0, geo.size.height - usedHeight)
+                        let emptyRowCount = Int(remaining / rowHeight) + 1
+
+                        ForEach(0..<emptyRowCount, id: \.self) { i in
+                            EmptyRowView(widths: widths, index: rowsDrawn + i)
+                        }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .overlay(alignment: .topTrailing) {
-                        if appState.isLoadingData {
-                            ProgressView()
-                                .controlSize(.small)
-                                .padding(6)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
-                                .padding(8)
-                        }
+                    .frame(minWidth: totalWidth)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if appState.isLoadingData {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(6)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                            .padding(8)
                     }
                 }
             }
         }
     }
 
-    /// Calculate column widths to fill the available width.
-    /// Each column gets at least a minimum width. If there's extra space, distribute evenly.
     private func calculateColumnWidths(columns: [ColumnInfo], available: CGFloat) -> [CGFloat] {
         guard !columns.isEmpty else { return [] }
 
         let separators = CGFloat(max(columns.count - 1, 0))
         let usable = available - separators
 
-        // Base minimum widths per type
         let minWidths: [CGFloat] = columns.map { col in
             if col.isBoolean { return 70 }
             if col.isNumeric { return 90 }
-            if col.isTemporal { return 140 }
-            // Estimate by column name length
-            let nameWidth = max(CGFloat(col.name.count) * 8, 80)
-            return min(nameWidth, 200)
+            if col.isTemporal { return 160 }
+            let nameWidth = max(CGFloat(col.name.count) * 8, 100)
+            return min(nameWidth, 240)
         }
 
         let totalMin = minWidths.reduce(0, +)
 
         if totalMin >= usable {
-            // Not enough space — use minimums (horizontal scroll will kick in)
             return minWidths
         }
 
-        // Distribute extra space proportionally
         let extra = usable - totalMin
         let perColumn = extra / CGFloat(columns.count)
         return minWidths.map { $0 + perColumn }
@@ -110,8 +113,10 @@ private struct HeaderView: View {
                                 .font(.system(size: 7, weight: .bold))
                                 .foregroundStyle(.tertiary)
                         }
+
+                        Spacer()
                     }
-                    .frame(width: widths[safe: i] ?? 120, alignment: .leading)
+                    .frame(width: widths[safe: i] ?? 120)
                     .padding(.horizontal, 8)
                 }
                 .buttonStyle(.plain)
@@ -132,7 +137,7 @@ private struct HeaderView: View {
     }
 }
 
-// MARK: - Row
+// MARK: - Data Row
 
 private struct RowView: View {
     let row: TableRow
@@ -162,8 +167,33 @@ private struct RowView: View {
             }
         }
         .onHover { isHovered = $0 }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.15)).frame(height: 1)
+    }
+}
+
+// MARK: - Empty Row (grid lines extending past data, like Postico)
+
+private struct EmptyRowView: View {
+    let widths: [CGFloat]
+    let index: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(widths.enumerated()), id: \.offset) { i, w in
+                Color.clear
+                    .frame(width: w)
+
+                if i < widths.count - 1 {
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor).opacity(0.15))
+                        .frame(width: 1)
+                }
+            }
+        }
+        .frame(height: 22)
+        .background {
+            if index % 2 == 1 {
+                Color(nsColor: .alternatingContentBackgroundColors[1])
+            }
         }
     }
 }
