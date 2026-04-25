@@ -34,7 +34,6 @@ struct TableInfo: Identifiable, Hashable, Sendable {
         self.estimatedRowCount = estimatedRowCount
     }
 
-    var qualifiedName: String { "\"\(schema)\".\"\(name)\"" }
 }
 
 enum TableType: String, Hashable, Sendable {

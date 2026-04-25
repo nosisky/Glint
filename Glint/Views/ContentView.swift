@@ -273,15 +273,16 @@ private struct DDLView: View {
     }
 
     private func generateDDL(_ table: TableInfo) -> String {
-        var ddl = "CREATE TABLE \(table.qualifiedName) (\n"
+        let qTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
+        var ddl = "CREATE TABLE \(qTable) (\n"
         for (i, col) in table.columns.enumerated() {
-            ddl += "    \"\(col.name)\" \(col.dataType)"
+            ddl += "    \(SQLSanitizer.quoteIdentifier(col.name)) \(col.dataType)"
             if !col.isNullable { ddl += " NOT NULL" }
             if let def = col.defaultValue { ddl += " DEFAULT \(def)" }
             if i < table.columns.count - 1 { ddl += "," }
             ddl += "\n"
         }
-        let pks = table.columns.filter(\.isPrimaryKey).map { "\"\($0.name)\"" }
+        let pks = table.columns.filter(\.isPrimaryKey).map { SQLSanitizer.quoteIdentifier($0.name) }
         if !pks.isEmpty {
             ddl += "    , PRIMARY KEY (\(pks.joined(separator: ", ")))\n"
         }

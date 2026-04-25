@@ -26,7 +26,10 @@ final class AppState {
     var queryResult: QueryResult = .empty
     var isLoadingData = false
     var currentPage = 1
-    var pageSize = 200
+    var pageSize: Int {
+        let stored = UserDefaults.standard.integer(forKey: "glint.pageSize")
+        return stored > 0 ? stored : 200
+    }
 
     // Filters
     var filters: [FilterConstraint] = []

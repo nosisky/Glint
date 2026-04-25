@@ -5,37 +5,14 @@ import SwiftUI
 struct FilterBar: View {
     @Environment(AppState.self) private var appState
     @State private var selectedColumn: String = "__any__"
-    @State private var selectedOperator: FilterOp = .contains
+    @State private var selectedOperator: FilterOperation = .contains
     @State private var searchText: String = ""
     @State private var showSQLPreview = false
     @FocusState private var isSearchFocused: Bool
 
-    enum FilterOp: String, CaseIterable {
-        case contains = "contains"
-        case equals = "equals"
-        case startsWith = "starts with"
-        case endsWith = "ends with"
-        case isNull = "is null"
-        case isNotNull = "is not null"
-
-        var requiresValue: Bool {
-            switch self {
-            case .isNull, .isNotNull: return false
-            default: return true
-            }
-        }
-
-        var toFilterOperation: FilterOperation {
-            switch self {
-            case .contains: .contains
-            case .equals: .equals
-            case .startsWith: .startsWith
-            case .endsWith: .endsWith
-            case .isNull: .isNull
-            case .isNotNull: .isNotNull
-            }
-        }
-    }
+    private static let quickFilterOps: [FilterOperation] = [
+        .contains, .equals, .startsWith, .endsWith, .isNull, .isNotNull
+    ]
 
     private var columns: [ColumnInfo] {
         appState.selectedTable?.columns ?? []
@@ -57,8 +34,8 @@ struct FilterBar: View {
 
                 // Operator picker
                 Picker("", selection: $selectedOperator) {
-                    ForEach(FilterOp.allCases, id: \.self) { op in
-                        Text(op.rawValue).tag(op)
+                    ForEach(Self.quickFilterOps, id: \.self) { op in
+                        Text(op.displayLabel).tag(op)
                     }
                 }
                 .labelsHidden()
@@ -127,7 +104,7 @@ struct FilterBar: View {
             guard let col = columns.first(where: { $0.name == selectedColumn }) else { return }
 
             let value: FilterValue
-            let operation = selectedOperator.toFilterOperation
+            let operation = selectedOperator
 
             switch selectedOperator {
             case .isNull, .isNotNull:

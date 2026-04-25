@@ -45,19 +45,26 @@ struct DataGridView: NSViewRepresentable {
             for col in table.columns { enrichedMap[col.name] = col }
         }
 
-        if coord.lastColumnIds != columns.map(\.name) {
+        let columnIds = columns.map(\.name)
+        if coord.lastColumnIds != columnIds {
             rebuildColumns(tableView: tableView, columns: columns, enriched: enrichedMap)
-            coord.lastColumnIds = columns.map(\.name)
+            coord.lastColumnIds = columnIds
             coord.needsInitialSizing = true
         }
 
         coord.columns = columns
         coord.enrichedColumns = enrichedMap
-        coord.rows = rows
         coord.appState = appState
         tableView.delegate = coord
         tableView.dataSource = coord
-        tableView.reloadData()
+
+        let dataFingerprint = "\(rows.count)-\(rows.first?.id.uuidString ?? "")-\(rows.last?.id.uuidString ?? "")-\(appState.pendingEdits.count)"
+        if coord.lastDataFingerprint != dataFingerprint {
+            coord.rows = rows
+            coord.pendingEditKeys = Set(appState.pendingEdits.map { "\($0.rowId)-\($0.columnIndex)" })
+            tableView.reloadData()
+            coord.lastDataFingerprint = dataFingerprint
+        }
 
         if coord.needsInitialSizing && !rows.isEmpty {
             autoSizeColumns(tableView: tableView, columns: columns, rows: rows)
@@ -125,6 +132,8 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
     var rows: [TableRow] = []
     weak var appState: AppState?
     var lastColumnIds: [String] = []
+    var lastDataFingerprint = ""
+    var pendingEditKeys: Set<String> = []
     var needsInitialSizing = true
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -150,7 +159,23 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
         if let fk = meta?.foreignKey {
             return CellFactory.foreignKey(cell: cell, row: row, col: colIndex, fk: fk, pending: pending, delegate: self)
         }
-        return CellFactory.text(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
+
+        let reuseId = NSUserInterfaceItemIdentifier("TextCell")
+        if let reused = tableView.makeView(withIdentifier: reuseId, owner: nil) as? NSTableCellView,
+           let field = reused.textField {
+            field.stringValue = cell.displayValue
+            field.font = cell.isNull ? .systemFont(ofSize: 12) : .monospacedSystemFont(ofSize: 12, weight: .regular)
+            field.textColor = cell.isNull ? .tertiaryLabelColor : .labelColor
+            field.tag = CellFactory.encodeTag(row: row, col: colIndex)
+            field.delegate = self
+            reused.wantsLayer = true
+            reused.layer?.backgroundColor = pending ? NSColor.systemYellow.withAlphaComponent(0.12).cgColor : nil
+            return reused
+        }
+
+        let view = CellFactory.text(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
+        view.identifier = reuseId
+        return view
     }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -198,13 +223,12 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
             for schema in appState.schemas {
                 if let refTable = schema.tables.first(where: { $0.name == fk.referencedTable }) {
                     await appState.selectTable(refTable)
-                    appState.filters = [FilterConstraint(
+                    await appState.addFilter(FilterConstraint(
                         columnName: fk.referencedColumn,
                         columnType: "text",
                         operation: .equals,
                         value: .text(value)
-                    )]
-                    await appState.fetchTableData()
+                    ))
                     return
                 }
             }
@@ -215,23 +239,30 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     private func hasPendingEdit(row: Int, col: Int) -> Bool {
         guard row < rows.count else { return false }
-        let rowId = rows[row].id
-        return appState?.pendingEdits.contains { $0.rowId == rowId && $0.columnIndex == col } ?? false
+        return pendingEditKeys.contains("\(rows[row].id)-\(col)")
     }
 
     private func recordEdit(row: Int, col: Int, cell: CellValue, newValue: String?) {
-        appState?.pendingEdits.append(PendingEdit(
-            rowId: rows[row].id,
-            columnIndex: col,
-            columnName: cell.columnName,
-            originalValue: cell.rawValue,
-            newValue: newValue
-        ))
+        guard let appState else { return }
+        let rowId = rows[row].id
+
+        appState.pendingEdits.removeAll { $0.rowId == rowId && $0.columnIndex == col }
+
+        if newValue != cell.rawValue {
+            appState.pendingEdits.append(PendingEdit(
+                rowId: rowId,
+                columnIndex: col,
+                columnName: cell.columnName,
+                originalValue: cell.rawValue,
+                newValue: newValue
+            ))
+        }
     }
 }
 
 // MARK: - Cell Factory
 
+@MainActor
 enum CellFactory {
     static func encodeTag(row: Int, col: Int) -> Int { row * 10000 + col }
     static func decodeTag(_ tag: Int) -> (row: Int, col: Int) { (tag / 10000, tag % 10000) }
