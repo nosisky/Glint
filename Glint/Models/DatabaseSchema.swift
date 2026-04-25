@@ -71,6 +71,10 @@ struct ColumnInfo: Identifiable, Hashable, Sendable {
     let numericPrecision: Int?
     let ordinalPosition: Int
 
+    // Schema intelligence
+    var enumValues: [String]?        // populated for enum types
+    var foreignKey: ForeignKeyRef?   // populated for FK columns
+
     /// Whether this column is text-searchable (for global search ILIKE).
     var isTextSearchable: Bool {
         let textTypes: Set<String> = [
@@ -107,13 +111,27 @@ struct ColumnInfo: Identifiable, Hashable, Sendable {
         udtName.lowercased() == "bool" || dataType.lowercased() == "boolean"
     }
 
-    /// SF Symbol for the column type.
-    var typeIcon: String {
-        if isPrimaryKey { return "key.fill" }
-        if isBoolean { return "checkmark.circle" }
-        if isNumeric { return "number" }
-        if isTextSearchable { return "textformat" }
-        if isTemporal { return "calendar" }
-        return "doc.questionmark"
+    /// Whether this is a user-defined enum type.
+    var isEnum: Bool {
+        dataType.lowercased() == "user-defined" && enumValues != nil
     }
+
+    /// Whether this column has a foreign key reference.
+    var isForeignKey: Bool { foreignKey != nil }
+
+    /// Human-readable type label for display.
+    var typeLabel: String {
+        if isEnum { return udtName }
+        if let maxLen = characterMaxLength {
+            return "\(udtName)(\(maxLen))"
+        }
+        return udtName
+    }
+}
+
+/// Foreign key reference to another table's column.
+struct ForeignKeyRef: Hashable, Sendable {
+    let constraintName: String
+    let referencedTable: String
+    let referencedColumn: String
 }

@@ -150,13 +150,113 @@ actor SchemaIntrospector {
         }
     }
 
-    /// Fetch all tables with their columns for a schema (combined call).
+    /// Fetch all tables with their columns, enums, and FKs for a schema.
     func fetchFullSchema(schema: String = "public") async throws -> DatabaseSchemaInfo {
         var tables = try await fetchTables(schema: schema)
+        let enums = try await fetchEnumTypes()
+        let foreignKeys = try await fetchForeignKeys(schema: schema)
+
         for i in tables.indices {
-            tables[i].columns = try await fetchColumns(schema: schema, table: tables[i].name)
+            var columns = try await fetchColumns(schema: schema, table: tables[i].name)
+
+            // Enrich with enum values
+            for j in columns.indices {
+                if columns[j].dataType.lowercased() == "user-defined" {
+                    if let values = enums[columns[j].udtName] {
+                        columns[j].enumValues = values
+                    }
+                }
+            }
+
+            // Enrich with FK references
+            let tableFKs = foreignKeys.filter { $0.tableName == tables[i].name }
+            for fk in tableFKs {
+                if let j = columns.firstIndex(where: { $0.name == fk.columnName }) {
+                    columns[j].foreignKey = ForeignKeyRef(
+                        constraintName: fk.constraintName,
+                        referencedTable: fk.referencedTable,
+                        referencedColumn: fk.referencedColumn
+                    )
+                }
+            }
+
+            tables[i].columns = columns
         }
         return DatabaseSchemaInfo(name: schema, tables: tables)
+    }
+
+    // MARK: - Enum Types
+
+    /// Fetch all user-defined enum types and their values.
+    func fetchEnumTypes() async throws -> [String: [String]] {
+        let sql = """
+            SELECT t.typname, e.enumlabel
+            FROM pg_type t
+            JOIN pg_enum e ON t.oid = e.enumtypid
+            ORDER BY t.typname, e.enumsortorder
+            """
+
+        let rows = try await connection.queryAll(sql)
+        var result: [String: [String]] = [:]
+        for row in rows {
+            let cols = row.makeRandomAccess()
+            guard let typeName = try? cols[0].decode(String.self),
+                  let enumLabel = try? cols[1].decode(String.self)
+            else { continue }
+            result[typeName, default: []].append(enumLabel)
+        }
+        return result
+    }
+
+    // MARK: - Foreign Keys
+
+    /// Intermediate struct for FK introspection results.
+    struct FKResult {
+        let constraintName: String
+        let tableName: String
+        let columnName: String
+        let referencedTable: String
+        let referencedColumn: String
+    }
+
+    /// Fetch all foreign key constraints for a schema.
+    func fetchForeignKeys(schema: String) async throws -> [FKResult] {
+        let sql = """
+            SELECT
+                tc.constraint_name,
+                kcu.table_name,
+                kcu.column_name,
+                ccu.table_name AS referenced_table,
+                ccu.column_name AS referenced_column
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                AND tc.table_schema = ccu.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = '\(schema)'
+            ORDER BY kcu.table_name, kcu.column_name
+            """
+
+        let rows = try await connection.queryAll(sql)
+        return rows.compactMap { row -> FKResult? in
+            let cols = row.makeRandomAccess()
+            guard let constraintName = try? cols[0].decode(String.self),
+                  let tableName = try? cols[1].decode(String.self),
+                  let columnName = try? cols[2].decode(String.self),
+                  let refTable = try? cols[3].decode(String.self),
+                  let refColumn = try? cols[4].decode(String.self)
+            else { return nil }
+            return FKResult(
+                constraintName: constraintName,
+                tableName: tableName,
+                columnName: columnName,
+                referencedTable: refTable,
+                referencedColumn: refColumn
+            )
+        }
     }
 
     /// Fetch distinct values for a column (for filter popover).

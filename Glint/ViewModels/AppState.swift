@@ -401,10 +401,31 @@ final class AppState {
             let conn = try await pool.getConnection()
             let introspector = SchemaIntrospector(connection: conn)
             var updatedTable = table
-            updatedTable.columns = try await introspector.fetchColumns(
+            var columns = try await introspector.fetchColumns(
                 schema: table.schema,
                 table: table.name
             )
+
+            // Enrich with enums and FK references
+            let enums = try await introspector.fetchEnumTypes()
+            let foreignKeys = try await introspector.fetchForeignKeys(schema: table.schema)
+
+            for j in columns.indices {
+                if columns[j].dataType.lowercased() == "user-defined" {
+                    columns[j].enumValues = enums[columns[j].udtName]
+                }
+            }
+            for fk in foreignKeys where fk.tableName == table.name {
+                if let j = columns.firstIndex(where: { $0.name == fk.columnName }) {
+                    columns[j].foreignKey = ForeignKeyRef(
+                        constraintName: fk.constraintName,
+                        referencedTable: fk.referencedTable,
+                        referencedColumn: fk.referencedColumn
+                    )
+                }
+            }
+
+            updatedTable.columns = columns
             return updatedTable
         } catch {
             return nil
