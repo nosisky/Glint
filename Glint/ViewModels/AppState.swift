@@ -173,15 +173,9 @@ final class AppState {
             let schemaInfos = try await introspector.fetchSchemas()
 
             var loadedSchemas: [DatabaseSchemaInfo] = []
-            for var schema in schemaInfos {
-                let tables = try await introspector.fetchTables(schema: schema.name)
-                var enrichedTables: [TableInfo] = []
-                for var table in tables {
-                    table.columns = try await introspector.fetchColumns(schema: schema.name, table: table.name)
-                    enrichedTables.append(table)
-                }
-                schema.tables = enrichedTables
-                loadedSchemas.append(schema)
+            for schema in schemaInfos {
+                let fullSchema = try await introspector.fetchFullSchema(schema: schema.name)
+                loadedSchemas.append(fullSchema)
             }
             schemas = loadedSchemas
 
