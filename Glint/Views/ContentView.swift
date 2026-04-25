@@ -145,9 +145,9 @@ private struct BottomBar: View {
                 }
             }
 
-            // + Row (placeholder)
+            // + Row
             Button {
-                // TODO: insert new row
+                appState.insertNewRow()
             } label: {
                 Text("+ Row")
                     .font(.system(size: 11))

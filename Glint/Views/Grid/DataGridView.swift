@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Data grid — fills full width and height, columns auto-sized, content pinned to top.
+/// Data grid — Postico-style: pinned header, horizontally synced scrolling,
+/// columns fill width, empty grid rows extend downward.
 struct DataGridView: View {
     @Environment(AppState.self) private var appState
 
@@ -27,30 +28,35 @@ struct DataGridView: View {
                 let columns = appState.queryResult.columns
                 let widths = calculateColumnWidths(columns: columns, available: geo.size.width)
                 let totalWidth = widths.reduce(0, +) + CGFloat(max(columns.count - 1, 0))
+                let viewHeight = geo.size.height
 
-                ScrollView([.horizontal, .vertical]) {
+                ScrollView(.horizontal, showsIndicators: true) {
                     VStack(spacing: 0) {
-                        // Header
-                        HeaderView(columns: columns, widths: widths)
+                        // Pinned header (only scrolls horizontally, not vertically)
+                        GridHeader(columns: columns, widths: widths)
 
-                        // Data rows
-                        ForEach(Array(appState.queryResult.rows.enumerated()), id: \.element.id) { index, row in
-                            RowView(row: row, widths: widths, index: index)
-                        }
+                        // Vertical scroll for rows
+                        ScrollView(.vertical, showsIndicators: true) {
+                            VStack(spacing: 0) {
+                                // Data rows
+                                ForEach(Array(appState.queryResult.rows.enumerated()), id: \.element.id) { index, row in
+                                    GridRow(row: row, widths: widths, index: index)
+                                }
 
-                        // Empty grid lines — fill remaining space like Postico
-                        let rowsDrawn = appState.queryResult.rows.count
-                        let rowHeight: CGFloat = 22
-                        let headerHeight: CGFloat = 24
-                        let usedHeight = headerHeight + CGFloat(rowsDrawn) * rowHeight
-                        let remaining = max(0, geo.size.height - usedHeight)
-                        let emptyRowCount = Int(remaining / rowHeight) + 1
+                                // Empty rows fill remaining space
+                                let rowsDrawn = appState.queryResult.rows.count
+                                let usedHeight = CGFloat(rowsDrawn) * 24
+                                let headerH: CGFloat = 24
+                                let remaining = max(0, viewHeight - headerH - usedHeight)
+                                let emptyCount = Int(remaining / 24) + 1
 
-                        ForEach(0..<emptyRowCount, id: \.self) { i in
-                            EmptyRowView(widths: widths, index: rowsDrawn + i)
+                                ForEach(0..<emptyCount, id: \.self) { i in
+                                    EmptyGridRow(widths: widths, index: rowsDrawn + i)
+                                }
+                            }
                         }
                     }
-                    .frame(minWidth: totalWidth)
+                    .frame(minWidth: max(totalWidth, geo.size.width))
                 }
                 .overlay(alignment: .topTrailing) {
                     if appState.isLoadingData {
@@ -72,18 +78,15 @@ struct DataGridView: View {
         let usable = available - separators
 
         let minWidths: [CGFloat] = columns.map { col in
-            if col.isBoolean { return 70 }
-            if col.isNumeric { return 90 }
-            if col.isTemporal { return 160 }
-            let nameWidth = max(CGFloat(col.name.count) * 8, 100)
-            return min(nameWidth, 240)
+            if col.isBoolean { return 80 }
+            if col.isNumeric { return 100 }
+            if col.isTemporal { return 180 }
+            let nameWidth = max(CGFloat(col.name.count) * 8 + 16, 100)
+            return min(nameWidth, 260)
         }
 
         let totalMin = minWidths.reduce(0, +)
-
-        if totalMin >= usable {
-            return minWidths
-        }
+        if totalMin >= usable { return minWidths }
 
         let extra = usable - totalMin
         let perColumn = extra / CGFloat(columns.count)
@@ -91,9 +94,9 @@ struct DataGridView: View {
     }
 }
 
-// MARK: - Header
+// MARK: - Grid Header
 
-private struct HeaderView: View {
+private struct GridHeader: View {
     let columns: [ColumnInfo]
     let widths: [CGFloat]
     @Environment(AppState.self) private var appState
@@ -122,15 +125,14 @@ private struct HeaderView: View {
                 .buttonStyle(.plain)
 
                 if i < columns.count - 1 {
-                    Rectangle()
-                        .fill(Color(nsColor: .separatorColor))
-                        .frame(width: 1)
+                    Divider().frame(height: 16)
                 }
             }
         }
         .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
         .frame(height: 24)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) {
             Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1)
         }
@@ -139,7 +141,7 @@ private struct HeaderView: View {
 
 // MARK: - Data Row
 
-private struct RowView: View {
+private struct GridRow: View {
     let row: TableRow
     let widths: [CGFloat]
     let index: Int
@@ -153,46 +155,45 @@ private struct RowView: View {
 
                 if i < row.values.count - 1 {
                     Rectangle()
-                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
+                        .fill(Color(nsColor: .separatorColor).opacity(0.2))
                         .frame(width: 1)
                 }
             }
         }
-        .frame(height: 22)
+        .frame(height: 24)
         .background {
             if isHovered {
-                Color.accentColor.opacity(0.08)
-            } else if index % 2 == 1 {
-                Color(nsColor: .alternatingContentBackgroundColors[1])
+                Color.accentColor.opacity(0.06)
+            } else if index % 2 == 0 {
+                Color(nsColor: .controlBackgroundColor).opacity(0.4)
             }
         }
         .onHover { isHovered = $0 }
     }
 }
 
-// MARK: - Empty Row (grid lines extending past data, like Postico)
+// MARK: - Empty Row (extends grid lines past data like Postico)
 
-private struct EmptyRowView: View {
+private struct EmptyGridRow: View {
     let widths: [CGFloat]
     let index: Int
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(widths.enumerated()), id: \.offset) { i, w in
-                Color.clear
-                    .frame(width: w)
+                Color.clear.frame(width: w)
 
                 if i < widths.count - 1 {
                     Rectangle()
-                        .fill(Color(nsColor: .separatorColor).opacity(0.15))
+                        .fill(Color(nsColor: .separatorColor).opacity(0.1))
                         .frame(width: 1)
                 }
             }
         }
-        .frame(height: 22)
+        .frame(height: 24)
         .background {
-            if index % 2 == 1 {
-                Color(nsColor: .alternatingContentBackgroundColors[1])
+            if index % 2 == 0 {
+                Color(nsColor: .controlBackgroundColor).opacity(0.4)
             }
         }
     }
@@ -218,19 +219,19 @@ private struct CellView: View {
             if isEditing {
                 TextField("", text: $editText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 12, design: .monospaced))
                     .padding(.horizontal, 8)
                     .onSubmit { commitEdit() }
                     .onExitCommand { isEditing = false }
             } else {
                 Text(cell.displayValue)
-                    .font(.system(size: 11, design: cell.isNull ? .default : .monospaced))
-                    .foregroundStyle(cell.isNull ? .tertiary : .primary)
+                    .font(.system(size: 12, design: cell.isNull ? .default : .monospaced))
+                    .foregroundStyle(cell.isNull ? Color(nsColor: .tertiaryLabelColor) : .primary)
                     .italic(cell.isNull)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.horizontal, 8)
-                    .frame(width: width, alignment: .leading)
+                    .frame(width: width, height: 24, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) {
                         editText = cell.rawValue ?? ""

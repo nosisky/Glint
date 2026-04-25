@@ -376,6 +376,23 @@ final class AppState {
         statusMessage = "Changes discarded"
     }
 
+    func insertNewRow() {
+        guard let table = selectedTable else { return }
+        let newRow = TableRow(values: table.columns.map { col in
+            CellValue(columnName: col.name, rawValue: nil, dataType: col.udtName)
+        })
+        queryResult = QueryResult(
+            rows: [newRow] + queryResult.rows,
+            columns: queryResult.columns,
+            totalCount: queryResult.totalCount + 1,
+            pageSize: queryResult.pageSize,
+            currentOffset: queryResult.currentOffset,
+            executionTimeMs: queryResult.executionTimeMs,
+            query: queryResult.query
+        )
+        statusMessage = "New row — edit values and save"
+    }
+
     // MARK: - Schema Refresh
 
     func loadColumnsForTable(_ table: TableInfo) async -> TableInfo? {
