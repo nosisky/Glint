@@ -8,9 +8,14 @@ final class AppState {
     var savedConnections: [ConnectionConfig] = []
     var activeConnectionId: UUID?
     var connectionPool: ConnectionPool?
+    var activePassword: String?
     var isConnecting = false
     var connectionError: String?
     var showConnectionSheet = false
+
+    // Database state
+    var databases: [String] = []
+    var currentDatabase: String = ""
 
     // Schema state
     var schemas: [DatabaseSchemaInfo] = []
@@ -93,7 +98,12 @@ final class AppState {
             try await pool.connect()
             connectionPool = pool
             activeConnectionId = config.id
+            activePassword = password
+            currentDatabase = config.database
             statusMessage = "Connected to \(config.database)"
+
+            // Load available databases and schema
+            await loadDatabases()
             await loadSchema()
         } catch {
             connectionError = error.localizedDescription
@@ -109,12 +119,61 @@ final class AppState {
         }
         connectionPool = nil
         activeConnectionId = nil
+        activePassword = nil
+        databases = []
+        currentDatabase = ""
         schemas = []
         selectedTable = nil
         queryResult = .empty
         filters = []
         globalSearchText = ""
         statusMessage = "Disconnected"
+    }
+
+    // MARK: - Database Listing
+
+    func loadDatabases() async {
+        guard let pool = connectionPool else { return }
+        do {
+            let conn = try await pool.getConnection()
+            let introspector = SchemaIntrospector(connection: conn)
+            databases = try await introspector.fetchDatabases()
+        } catch {
+            // Non-fatal — just won't show the database picker
+            databases = [currentDatabase]
+        }
+    }
+
+    func switchDatabase(_ dbName: String) async {
+        guard dbName != currentDatabase,
+              let config = activeConfig,
+              let password = activePassword
+        else { return }
+
+        // Disconnect from current database
+        if let pool = connectionPool {
+            await pool.disconnectAll()
+        }
+        connectionPool = nil
+        schemas = []
+        selectedTable = nil
+        queryResult = .empty
+        currentDatabase = dbName
+
+        // Reconnect with the new database name
+        var newConfig = config
+        newConfig.database = dbName
+        statusMessage = "Switching to \(dbName)…"
+
+        do {
+            let pool = ConnectionPool(config: newConfig, password: password)
+            try await pool.connect()
+            connectionPool = pool
+            statusMessage = "Connected to \(dbName)"
+            await loadSchema()
+        } catch {
+            statusMessage = "Failed to switch: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Schema Loading
@@ -131,7 +190,17 @@ final class AppState {
 
             var loadedSchemas: [DatabaseSchemaInfo] = []
             for var schema in schemaInfos {
-                schema.tables = try await introspector.fetchTables(schema: schema.name)
+                let tables = try await introspector.fetchTables(schema: schema.name)
+                // Load columns for each table so they're ready for selectTable
+                var tablesWithColumns: [TableInfo] = []
+                for var table in tables {
+                    table.columns = try await introspector.fetchColumns(
+                        schema: schema.name,
+                        table: table.name
+                    )
+                    tablesWithColumns.append(table)
+                }
+                schema.tables = tablesWithColumns
                 loadedSchemas.append(schema)
             }
             schemas = loadedSchemas
@@ -141,7 +210,8 @@ final class AppState {
                 schemas = [publicSchema]
             }
 
-            statusMessage = "Schema loaded — \(schemas.flatMap(\.tables).count) tables"
+            let tableCount = schemas.flatMap(\.tables).count
+            statusMessage = "Schema loaded — \(tableCount) table\(tableCount == 1 ? "" : "s")"
         } catch {
             statusMessage = "Schema load failed: \(error.localizedDescription)"
         }

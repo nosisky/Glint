@@ -22,31 +22,67 @@ private struct ConnectedSidebar: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        List(selection: Binding(
-            get: { appState.selectedTable },
-            set: { table in
-                if let table {
-                    Task { await appState.selectTable(table) }
-                }
+        VStack(spacing: 0) {
+            // Database picker (if multiple databases available)
+            if appState.databases.count > 1 {
+                DatabasePicker()
             }
-        )) {
-            ForEach(appState.schemas) { schema in
-                Section(schema.name) {
-                    ForEach(schema.tables) { table in
-                        TableSidebarRow(table: table)
-                            .tag(table)
+
+            // Table list
+            List(selection: Binding(
+                get: { appState.selectedTable },
+                set: { table in
+                    if let table {
+                        Task { await appState.selectTable(table) }
+                    }
+                }
+            )) {
+                if appState.schemas.isEmpty && !appState.isLoadingSchema {
+                    ContentUnavailableView {
+                        Label("No Tables", systemImage: "tray")
+                    } description: {
+                        Text("This database has no tables.")
+                    }
+                } else {
+                    ForEach(appState.schemas) { schema in
+                        Section(schema.name) {
+                            ForEach(schema.tables) { table in
+                                TableSidebarRow(table: table)
+                                    .tag(table)
+                            }
+                        }
                     }
                 }
             }
+            .listStyle(.sidebar)
         }
-        .listStyle(.sidebar)
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Menu {
                     Button("Refresh Schema") {
                         Task { await appState.loadSchema() }
                     }
+
+                    if appState.databases.count > 1 {
+                        Menu("Switch Database") {
+                            ForEach(appState.databases, id: \.self) { db in
+                                Button {
+                                    Task { await appState.switchDatabase(db) }
+                                } label: {
+                                    HStack {
+                                        Text(db)
+                                        if db == appState.currentDatabase {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                                .disabled(db == appState.currentDatabase)
+                            }
+                        }
+                    }
+
                     Divider()
+
                     Button("Disconnect", role: .destructive) {
                         Task { await appState.disconnect() }
                     }
@@ -68,6 +104,37 @@ private struct ConnectedSidebar: View {
                 .background(.ultraThinMaterial)
             }
         }
+    }
+}
+
+// MARK: - Database Picker
+
+private struct DatabasePicker: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(spacing: GlintDesign.spacingSM) {
+            Image(systemName: "cylinder")
+                .font(.system(size: 11))
+                .foregroundStyle(GlintDesign.gold)
+
+            Picker("", selection: Binding(
+                get: { appState.currentDatabase },
+                set: { db in
+                    Task { await appState.switchDatabase(db) }
+                }
+            )) {
+                ForEach(appState.databases, id: \.self) { db in
+                    Text(db).tag(db)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+        .padding(.horizontal, GlintDesign.spacingMD)
+        .padding(.vertical, GlintDesign.spacingSM)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 

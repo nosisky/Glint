@@ -2,12 +2,31 @@ import Foundation
 import PostgresNIO
 
 /// Service that introspects PostgreSQL catalogs to build schema metadata.
-/// Queries `information_schema` and `pg_catalog` for tables, columns, and constraints.
+/// Queries `information_schema` and `pg_catalog` for databases, tables, columns, and constraints.
 actor SchemaIntrospector {
     private let connection: PostgresConnection
 
     init(connection: PostgresConnection) {
         self.connection = connection
+    }
+
+    // MARK: - Database Listing
+
+    /// Fetch all databases on the server (excluding templates).
+    func fetchDatabases() async throws -> [String] {
+        let sql = """
+            SELECT datname
+            FROM pg_catalog.pg_database
+            WHERE datistemplate = false
+              AND datallowconn = true
+            ORDER BY datname
+            """
+
+        let rows = try await connection.queryAll(sql)
+        return rows.compactMap { row -> String? in
+            let cols = row.makeRandomAccess()
+            return try? cols[0].decode(String.self)
+        }
     }
 
     // MARK: - Schema Introspection
