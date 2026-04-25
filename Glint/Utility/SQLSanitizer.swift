@@ -1,23 +1,24 @@
 import Foundation
 
-/// SQL string sanitization utilities.
 struct SQLSanitizer: Sendable {
-    
-    /// Sanitize an identifier (table/column name) for safe use in SQL.
+
     static func quoteIdentifier(_ name: String) -> String {
         let escaped = name.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
     }
 
-    /// Sanitize a string literal for safe use in SQL.
     static func quoteLiteral(_ value: String) -> String {
-        let escaped = value.replacingOccurrences(of: "'", with: "''")
-        return "'\(escaped)'"
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "''")
+            .replacingOccurrences(of: "\0", with: "")
+        return "E'\(escaped)'"
     }
 
-    /// Check if a string contains potential SQL injection patterns.
-    static func isSuspicious(_ input: String) -> Bool {
-        let patterns = ["--", ";", "/*", "*/", "xp_", "exec(", "execute("]
-        return patterns.contains { input.lowercased().contains($0) }
+    static func escapeLike(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
     }
 }

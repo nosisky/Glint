@@ -43,7 +43,7 @@ actor SchemaIntrospector {
             LEFT JOIN pg_catalog.pg_class c
                 ON c.relname = t.table_name
                 AND c.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = t.table_schema)
-            WHERE t.table_schema = '\(schema)'
+            WHERE t.table_schema = \(SQLSanitizer.quoteLiteral(schema))
             ORDER BY t.table_name
             """)
 
@@ -82,7 +82,7 @@ actor SchemaIntrospector {
                 WHERE tc.constraint_type = 'PRIMARY KEY'
             ) pk ON pk.column_name = c.column_name
                 AND pk.table_schema = c.table_schema AND pk.table_name = c.table_name
-            WHERE c.table_schema = '\(schema)' AND c.table_name = '\(table)'
+            WHERE c.table_schema = \(SQLSanitizer.quoteLiteral(schema)) AND c.table_name = \(SQLSanitizer.quoteLiteral(table))
             ORDER BY c.ordinal_position
             """)
 
@@ -168,7 +168,7 @@ actor SchemaIntrospector {
                 ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
             JOIN information_schema.constraint_column_usage ccu
                 ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '\(schema)'
+            WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = \(SQLSanitizer.quoteLiteral(schema))
             ORDER BY kcu.table_name, kcu.column_name
             """)
 
@@ -188,10 +188,12 @@ actor SchemaIntrospector {
     // MARK: - Distinct Values
 
     func fetchDistinctValues(schema: String, table: String, column: String, limit: Int = 200) async throws -> [String?] {
+        let qCol = SQLSanitizer.quoteIdentifier(column)
+        let qTable = "\(SQLSanitizer.quoteIdentifier(schema)).\(SQLSanitizer.quoteIdentifier(table))"
         let rows = try await connection.queryAll("""
-            SELECT DISTINCT "\(column)"::text
-            FROM "\(schema)"."\(table)"
-            ORDER BY "\(column)"::text
+            SELECT DISTINCT \(qCol)::text
+            FROM \(qTable)
+            ORDER BY \(qCol)::text
             LIMIT \(limit)
             """)
         return rows.map { try? $0.makeRandomAccess()[0].decode(String?.self) }
@@ -200,7 +202,8 @@ actor SchemaIntrospector {
     // MARK: - Row Count
 
     func fetchExactRowCount(schema: String, table: String) async throws -> Int64 {
-        try await connection.queryScalar("SELECT count(*) FROM \"\(schema)\".\"\(table)\"")
+        let qTable = "\(SQLSanitizer.quoteIdentifier(schema)).\(SQLSanitizer.quoteIdentifier(table))"
+        return try await connection.queryScalar("SELECT count(*) FROM \(qTable)")
     }
 
     // MARK: - Enrichment Helpers

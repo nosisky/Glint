@@ -43,7 +43,8 @@ actor PostgresConnection {
         disconnect()
 
         var tlsConfig: PostgresClient.Configuration.TLS = .disable
-        if config.useSSL {
+        let isLocalhost = config.host == "localhost" || config.host == "127.0.0.1"
+        if config.useSSL || !isLocalhost {
             tlsConfig = .prefer(.makeClientConfiguration())
         }
 

@@ -30,26 +30,29 @@ struct QueryBuilder: Sendable {
 
         let orderClause: String
         if let orderBy {
-            orderClause = "ORDER BY \"\(orderBy)\" \(ascending ? "ASC" : "DESC") NULLS LAST"
+            let dir = ascending ? "ASC" : "DESC"
+            orderClause = "ORDER BY \(SQLSanitizer.quoteIdentifier(orderBy)) \(dir) NULLS LAST"
         } else if let pk = table.columns.first(where: { $0.isPrimaryKey }) {
-            orderClause = "ORDER BY \"\(pk.name)\" ASC"
+            orderClause = "ORDER BY \(SQLSanitizer.quoteIdentifier(pk.name)) ASC"
         } else {
             orderClause = "ORDER BY 1 ASC"
         }
 
         let selectList = table.columns.isEmpty ? "*" : table.columns.map {
-            "\"\($0.name)\"::text AS \"\($0.name)\""
+            "\(SQLSanitizer.quoteIdentifier($0.name))::text AS \(SQLSanitizer.quoteIdentifier($0.name))"
         }.joined(separator: ", ")
 
+        let qualifiedTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
+
         let sql = """
-            SELECT \(selectList) FROM \(table.qualifiedName)
+            SELECT \(selectList) FROM \(qualifiedTable)
             \(whereClause)
             \(orderClause)
             LIMIT \(limit) OFFSET \(offset)
             """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let countSQL = """
-            SELECT count(*) FROM \(table.qualifiedName)
+            SELECT count(*) FROM \(qualifiedTable)
             \(whereClause)
             """.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -59,47 +62,47 @@ struct QueryBuilder: Sendable {
     // MARK: - Condition Builders
 
     private func buildCondition(_ filter: FilterConstraint) -> String? {
-        let col = "\"\(filter.columnName)\""
+        let col = SQLSanitizer.quoteIdentifier(filter.columnName)
 
         switch filter.operation {
         case .equals:
             switch filter.value {
-            case .text(let v): return "\(col) = \(escapeString(v))"
+            case .text(let v): return "\(col) = \(SQLSanitizer.quoteLiteral(v))"
             case .number(let v): return "\(col) = \(v)"
             case .boolean(let v): return "\(col) = \(v)"
             default: return nil
             }
         case .notEquals:
             switch filter.value {
-            case .text(let v): return "\(col) != \(escapeString(v))"
+            case .text(let v): return "\(col) != \(SQLSanitizer.quoteLiteral(v))"
             case .number(let v): return "\(col) != \(v)"
             default: return nil
             }
         case .contains:
             if case .text(let v) = filter.value {
-                return "\(col)::text ILIKE \(escapeString("%\(escapeLike(v))%"))"
+                return "\(col)::text ILIKE \(SQLSanitizer.quoteLiteral("%\(SQLSanitizer.escapeLike(v))%"))"
             }
             return nil
         case .startsWith:
             if case .text(let v) = filter.value {
-                return "\(col)::text ILIKE \(escapeString("\(escapeLike(v))%"))"
+                return "\(col)::text ILIKE \(SQLSanitizer.quoteLiteral("\(SQLSanitizer.escapeLike(v))%"))"
             }
             return nil
         case .endsWith:
             if case .text(let v) = filter.value {
-                return "\(col)::text ILIKE \(escapeString("%\(escapeLike(v))"))"
+                return "\(col)::text ILIKE \(SQLSanitizer.quoteLiteral("%\(SQLSanitizer.escapeLike(v))"))"
             }
             return nil
         case .greaterThan:
             switch filter.value {
             case .number(let v): return "\(col) > \(v)"
-            case .date(let d): return "\(col) > \(escapeString(d.ISO8601Format()))"
+            case .date(let d): return "\(col) > \(SQLSanitizer.quoteLiteral(d.ISO8601Format()))"
             default: return nil
             }
         case .lessThan:
             switch filter.value {
             case .number(let v): return "\(col) < \(v)"
-            case .date(let d): return "\(col) < \(escapeString(d.ISO8601Format()))"
+            case .date(let d): return "\(col) < \(SQLSanitizer.quoteLiteral(d.ISO8601Format()))"
             default: return nil
             }
         case .greaterOrEqual:
@@ -112,7 +115,7 @@ struct QueryBuilder: Sendable {
             switch filter.value {
             case .range(let lo, let hi): return "\(col) BETWEEN \(lo) AND \(hi)"
             case .dateRange(let from, let to):
-                return "\(col) BETWEEN \(escapeString(from.ISO8601Format())) AND \(escapeString(to.ISO8601Format()))"
+                return "\(col) BETWEEN \(SQLSanitizer.quoteLiteral(from.ISO8601Format())) AND \(SQLSanitizer.quoteLiteral(to.ISO8601Format()))"
             default: return nil
             }
         case .isNull:
@@ -121,31 +124,19 @@ struct QueryBuilder: Sendable {
             return "\(col) IS NOT NULL"
         case .inList:
             if case .list(let items) = filter.value {
-                return "\(col) IN (\(items.map { escapeString($0) }.joined(separator: ", ")))"
+                return "\(col) IN (\(items.map { SQLSanitizer.quoteLiteral($0) }.joined(separator: ", ")))"
             }
             return nil
         }
     }
 
     private func buildGlobalSearch(_ searchText: String, columns: [ColumnInfo]) -> String {
-        let pattern = escapeString("%\(escapeLike(searchText))%")
+        let pattern = SQLSanitizer.quoteLiteral("%\(SQLSanitizer.escapeLike(searchText))%")
         return columns.compactMap { col -> String? in
-            if col.isTextSearchable { return "\"\(col.name)\" ILIKE \(pattern)" }
-            if col.isNumeric { return "\"\(col.name)\"::text ILIKE \(pattern)" }
+            let quoted = SQLSanitizer.quoteIdentifier(col.name)
+            if col.isTextSearchable { return "\(quoted) ILIKE \(pattern)" }
+            if col.isNumeric { return "\(quoted)::text ILIKE \(pattern)" }
             return nil
         }.joined(separator: " OR ")
-    }
-
-    // MARK: - SQL Safety
-
-    private func escapeString(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
-    }
-
-    private func escapeLike(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
     }
 }

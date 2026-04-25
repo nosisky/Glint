@@ -7,7 +7,7 @@ final class AppState {
     var savedConnections: [ConnectionConfig] = []
     var activeConnectionId: UUID?
     var connectionPool: ConnectionPool?
-    var activePassword: String?
+
     var isConnecting = false
     var connectionError: String?
     var showConnectionSheet = false
@@ -91,7 +91,6 @@ final class AppState {
             try await pool.connect()
             connectionPool = pool
             activeConnectionId = config.id
-            activePassword = password
             currentDatabase = config.database
             statusMessage = "Connected to \(config.database)"
             await loadDatabases()
@@ -108,7 +107,6 @@ final class AppState {
         if let pool = connectionPool { await pool.disconnectAll() }
         connectionPool = nil
         activeConnectionId = nil
-        activePassword = nil
         databases = []
         currentDatabase = ""
         schemas = []
@@ -135,7 +133,7 @@ final class AppState {
     func switchDatabase(_ dbName: String) async {
         guard dbName != currentDatabase,
               let config = activeConfig,
-              let password = activePassword
+              let password = try? KeychainService.readPassword(account: config.keychainAccount)
         else { return }
 
         if let pool = connectionPool { await pool.disconnectAll() }
@@ -307,20 +305,19 @@ final class AppState {
 
                 let setClauses = edits.compactMap { edit -> String? in
                     guard edit.hasChanged else { return nil }
+                    let qCol = SQLSanitizer.quoteIdentifier(edit.columnName)
                     if let newValue = edit.newValue {
-                        return "\"\(edit.columnName)\" = '\(newValue.replacingOccurrences(of: "'", with: "''"))'"
+                        return "\(qCol) = \(SQLSanitizer.quoteLiteral(newValue))"
                     }
-                    return "\"\(edit.columnName)\" = NULL"
+                    return "\(qCol) = NULL"
                 }
 
                 guard !setClauses.isEmpty else { continue }
 
-                let pkEscaped = (pkValue.rawValue ?? "").replacingOccurrences(of: "'", with: "''")
-                let sql = """
-                    UPDATE \(table.qualifiedName)
-                    SET \(setClauses.joined(separator: ", "))
-                    WHERE "\(pkColumn.name)" = '\(pkEscaped)'
-                    """
+                let qTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
+                let qPK = SQLSanitizer.quoteIdentifier(pkColumn.name)
+                let pkLiteral = SQLSanitizer.quoteLiteral(pkValue.rawValue ?? "")
+                let sql = "UPDATE \(qTable) SET \(setClauses.joined(separator: ", ")) WHERE \(qPK) = \(pkLiteral)"
 
                 let rows = try await conn.query(sql)
                 for try await _ in rows {}
