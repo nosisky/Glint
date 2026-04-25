@@ -43,6 +43,7 @@ final class AppState {
     var statusMessage = "Ready"
     var selectedSidebarItem: SidebarItem?
     var showConsole = false
+    var showFilterBar = false
 
     // MARK: - Computed
 

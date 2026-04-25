@@ -83,7 +83,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Table Content Area (grid + bottom bar)
+// MARK: - Table Content Area (filter bar + grid + bottom bar)
 
 struct TableContentArea: View {
     @Environment(AppState.self) private var appState
@@ -97,9 +97,9 @@ struct TableContentArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Active filters
-            if appState.hasActiveFilters && tab == .content {
-                ActiveFiltersBar()
+            // Filter bar — toggled by bottom bar button
+            if appState.showFilterBar && tab == .content {
+                FilterBar()
             }
 
             // Main content
@@ -128,7 +128,7 @@ private struct BottomBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Tabs
+            // Content / Structure / DDL tabs
             HStack(spacing: 0) {
                 ForEach(TableContentArea.ContentTab.allCases, id: \.self) { t in
                     Button {
@@ -145,21 +145,25 @@ private struct BottomBar: View {
                 }
             }
 
+            // + Row (placeholder)
+            Button {
+                // TODO: insert new row
+            } label: {
+                Text("+ Row")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 8)
+
             Spacer()
 
-            // Row info
+            // Row count
             if tab == .content && appState.queryResult.totalCount > 0 {
                 Text("\(appState.queryResult.totalCount) rows")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
-                    .padding(.trailing, 8)
-
-                if appState.queryResult.executionTimeMs > 0 {
-                    Text("\(String(format: "%.0f", appState.queryResult.executionTimeMs))ms")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.quaternary)
-                        .padding(.trailing, 12)
-                }
+                    .padding(.trailing, 12)
             }
 
             // Pending edits
@@ -179,14 +183,22 @@ private struct BottomBar: View {
                 .padding(.trailing, 8)
             }
 
-            // Filter toggle
+            // Filter toggle button — stays blue when filter bar is open
             if tab == .content {
                 Button {
-                    // TODO: toggle filter panel
+                    appState.showFilterBar.toggle()
                 } label: {
                     Text("Filter")
-                        .font(.system(size: 11))
-                        .foregroundStyle(appState.hasActiveFilters ? .primary : .secondary)
+                        .font(.system(size: 11, weight: appState.showFilterBar ? .semibold : .regular))
+                        .foregroundStyle(appState.showFilterBar || appState.hasActiveFilters ? .white : .secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            appState.showFilterBar || appState.hasActiveFilters
+                                ? Color.accentColor
+                                : .clear,
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 8)
