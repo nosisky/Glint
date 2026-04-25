@@ -12,7 +12,7 @@ struct DataGridView: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
 
-        let tableView = NSTableView()
+        let tableView = GlintTableView()
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsMultipleSelection = true
@@ -355,5 +355,13 @@ enum CellFactory {
         guard pending else { return }
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.12).cgColor
+    }
+}
+
+// MARK: - Table View Subclass
+
+private class GlintTableView: NSTableView {
+    override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
+        true
     }
 }
