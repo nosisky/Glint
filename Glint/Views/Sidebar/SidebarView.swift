@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Sidebar — clean table list. Postico-style: just the table names.
+/// Sidebar — Postico-style: search bar + flat table list.
 struct SidebarView: View {
     @Environment(AppState.self) private var appState
 
@@ -19,72 +19,47 @@ struct SidebarView: View {
 
 private struct ConnectedSidebar: View {
     @Environment(AppState.self) private var appState
+    @State private var searchText = ""
+
+    private var filteredSchemas: [DatabaseSchemaInfo] {
+        if searchText.isEmpty { return appState.schemas }
+        return appState.schemas.compactMap { schema in
+            let filtered = schema.tables.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+            if filtered.isEmpty { return nil }
+            return DatabaseSchemaInfo(name: schema.name, tables: filtered)
+        }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Database picker
-            if appState.databases.count > 1 {
-                Picker("", selection: Binding(
-                    get: { appState.currentDatabase },
-                    set: { db in Task { await appState.switchDatabase(db) } }
-                )) {
-                    ForEach(appState.databases, id: \.self) { db in
-                        Text(db).tag(db)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+        List(selection: Binding(
+            get: { appState.selectedTable },
+            set: { table in
+                if let table { Task { await appState.selectTable(table) } }
             }
+        )) {
+            let schemas = filteredSchemas
+            let showSections = schemas.count > 1
 
-            // Table list
-            List(selection: Binding(
-                get: { appState.selectedTable },
-                set: { table in
-                    if let table { Task { await appState.selectTable(table) } }
-                }
-            )) {
-                ForEach(appState.schemas) { schema in
-                    let showHeader = appState.schemas.count > 1
-
-                    if showHeader {
-                        Section(schema.name) {
-                            tableRows(schema.tables)
-                        }
-                    } else {
-                        tableRows(schema.tables)
+            ForEach(schemas) { schema in
+                if showSections {
+                    Section(schema.name) {
+                        tableList(schema.tables)
                     }
+                } else {
+                    tableList(schema.tables)
                 }
             }
-            .listStyle(.sidebar)
         }
+        .listStyle(.sidebar)
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Search")
         .toolbar {
             ToolbarItem(placement: .automatic) {
-                Menu {
-                    Button("Refresh") {
-                        Task { await appState.loadSchema() }
-                    }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
-
-                    if appState.databases.count > 1 {
-                        Divider()
-                        Menu("Database") {
-                            ForEach(appState.databases, id: \.self) { db in
-                                Button(db) { Task { await appState.switchDatabase(db) } }
-                                    .disabled(db == appState.currentDatabase)
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Button("Disconnect") {
-                        Task { await appState.disconnect() }
-                    }
+                Button {
+                    Task { await appState.loadSchema() }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: "arrow.clockwise")
                 }
+                .help("Refresh Schema")
             }
         }
         .overlay {
@@ -97,15 +72,17 @@ private struct ConnectedSidebar: View {
     }
 
     @ViewBuilder
-    private func tableRows(_ tables: [TableInfo]) -> some View {
+    private func tableList(_ tables: [TableInfo]) -> some View {
         ForEach(tables) { table in
-            Label {
-                Text(table.name)
-                    .lineLimit(1)
-            } icon: {
+            HStack(spacing: 6) {
                 Image(systemName: table.type.icon)
-                    .foregroundStyle(table.type == .view ? .secondary : .primary)
-                    .font(.system(size: 11))
+                    .font(.system(size: 10))
+                    .foregroundColor(table.type == .view ? .secondary : .accentColor)
+                    .frame(width: 14)
+
+                Text(table.name)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
             }
             .tag(table)
         }
@@ -121,24 +98,12 @@ private struct DisconnectedSidebar: View {
         List {
             Section("Saved") {
                 ForEach(appState.savedConnections) { config in
-                    Label {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(config.name)
-                                .font(.system(size: 13))
-                            Text(config.host)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                        }
-                    } icon: {
-                        if config.colorTag != .none {
-                            Circle()
-                                .fill(GlintDesign.tagColor(config.colorTag))
-                                .frame(width: 8, height: 8)
-                        } else {
-                            Image(systemName: "server.rack")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(config.name)
+                            .font(.system(size: 13))
+                        Text("\(config.host):\(config.port)/\(config.database)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
                     }
                 }
             }

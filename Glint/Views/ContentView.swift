@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Main content — NavigationSplitView with sidebar + detail.
+/// Main layout — Postico-style: toolbar with DB picker, sidebar with search, bottom bar.
 struct ContentView: View {
     @Environment(AppState.self) private var appState
 
@@ -13,7 +13,7 @@ struct ContentView: View {
         } detail: {
             if appState.isConnected {
                 if appState.selectedTable != nil {
-                    DataGridContainer()
+                    TableContentArea()
                 } else {
                     SelectTablePrompt()
                 }
@@ -21,19 +21,43 @@ struct ContentView: View {
                 WelcomeView()
             }
         }
-        .navigationTitle(appState.isConnected ? appState.currentDatabase : "Glint")
+        .navigationTitle(windowTitle)
+        .navigationSubtitle(windowSubtitle)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if appState.isConnected {
-                    GlobalSearchBar()
+            // Database picker — center of toolbar, Postico-style
+            ToolbarItem(placement: .principal) {
+                if appState.isConnected && appState.databases.count > 1 {
+                    Picker("", selection: Binding(
+                        get: { appState.currentDatabase },
+                        set: { db in Task { await appState.switchDatabase(db) } }
+                    )) {
+                        ForEach(appState.databases, id: \.self) { db in
+                            Text(db).tag(db)
+                        }
+                    }
+                    .frame(width: 180)
+                } else if appState.isConnected {
+                    Text(appState.currentDatabase)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
             }
 
+            // Connection status
             ToolbarItem(placement: .status) {
-                Text(appState.statusMessage)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if appState.isConnecting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if appState.isConnected {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(.green)
+                            .frame(width: 6, height: 6)
+                        Text(appState.activeConfig.map { "\($0.host):\($0.port)" } ?? "")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
         }
         .sheet(isPresented: $state.showConnectionSheet) {
@@ -42,6 +66,198 @@ struct ContentView: View {
         .onAppear {
             appState.loadSavedConnections()
         }
+    }
+
+    private var windowTitle: String {
+        if let table = appState.selectedTable {
+            return table.name
+        }
+        return appState.isConnected ? appState.currentDatabase : "Glint"
+    }
+
+    private var windowSubtitle: String {
+        if appState.selectedTable != nil, let config = appState.activeConfig {
+            return "\(config.name) – \(appState.currentDatabase)"
+        }
+        return ""
+    }
+}
+
+// MARK: - Table Content Area (grid + bottom bar)
+
+struct TableContentArea: View {
+    @Environment(AppState.self) private var appState
+    @State private var tab: ContentTab = .content
+
+    enum ContentTab: String, CaseIterable {
+        case content = "Content"
+        case structure = "Structure"
+        case ddl = "DDL"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Active filters
+            if appState.hasActiveFilters && tab == .content {
+                ActiveFiltersBar()
+            }
+
+            // Main content
+            switch tab {
+            case .content:
+                DataGridView()
+            case .structure:
+                if let table = appState.selectedTable {
+                    TableStructureView(table: table)
+                }
+            case .ddl:
+                DDLView()
+            }
+
+            // Bottom bar — Postico-style
+            BottomBar(tab: $tab)
+        }
+    }
+}
+
+// MARK: - Bottom Bar
+
+private struct BottomBar: View {
+    @Binding var tab: TableContentArea.ContentTab
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Tabs
+            HStack(spacing: 0) {
+                ForEach(TableContentArea.ContentTab.allCases, id: \.self) { t in
+                    Button {
+                        tab = t
+                    } label: {
+                        Text(t.rawValue)
+                            .font(.system(size: 11, weight: tab == t ? .semibold : .regular))
+                            .foregroundStyle(tab == t ? .primary : .secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(tab == t ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Spacer()
+
+            // Row info
+            if tab == .content && appState.queryResult.totalCount > 0 {
+                Text("\(appState.queryResult.totalCount) rows")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 8)
+
+                if appState.queryResult.executionTimeMs > 0 {
+                    Text("\(String(format: "%.0f", appState.queryResult.executionTimeMs))ms")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.quaternary)
+                        .padding(.trailing, 12)
+                }
+            }
+
+            // Pending edits
+            if appState.hasPendingEdits {
+                HStack(spacing: 6) {
+                    Button("Discard") {
+                        appState.discardEdits()
+                    }
+                    .controlSize(.small)
+
+                    Button("Save \(appState.pendingEdits.count) Change\(appState.pendingEdits.count == 1 ? "" : "s")") {
+                        Task { await appState.commitEdits() }
+                    }
+                    .controlSize(.small)
+                    .keyboardShortcut(.return, modifiers: [.command])
+                }
+                .padding(.trailing, 8)
+            }
+
+            // Filter toggle
+            if tab == .content {
+                Button {
+                    // TODO: toggle filter panel
+                } label: {
+                    Text("Filter")
+                        .font(.system(size: 11))
+                        .foregroundStyle(appState.hasActiveFilters ? .primary : .secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+            }
+
+            // Pagination
+            if tab == .content && appState.queryResult.totalPages > 1 {
+                HStack(spacing: 4) {
+                    Button {
+                        Task { await appState.previousPage() }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(appState.currentPage <= 1)
+
+                    Text("Page \(appState.currentPage) of \(appState.queryResult.totalPages)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        Task { await appState.nextPage() }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!appState.queryResult.hasMore)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+// MARK: - DDL View (placeholder)
+
+private struct DDLView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if let table = appState.selectedTable {
+            ScrollView {
+                Text(generateDDL(table))
+                    .font(.system(size: 13, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+        }
+    }
+
+    private func generateDDL(_ table: TableInfo) -> String {
+        var ddl = "CREATE TABLE \(table.qualifiedName) (\n"
+        for (i, col) in table.columns.enumerated() {
+            ddl += "    \"\(col.name)\" \(col.dataType)"
+            if !col.isNullable { ddl += " NOT NULL" }
+            if let def = col.defaultValue { ddl += " DEFAULT \(def)" }
+            if i < table.columns.count - 1 { ddl += "," }
+            ddl += "\n"
+        }
+        let pks = table.columns.filter(\.isPrimaryKey).map { "\"\($0.name)\"" }
+        if !pks.isEmpty {
+            ddl += "    , PRIMARY KEY (\(pks.joined(separator: ", ")))\n"
+        }
+        ddl += ");\n"
+        return ddl
     }
 }
 
