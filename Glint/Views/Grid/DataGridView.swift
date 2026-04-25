@@ -39,8 +39,9 @@ struct DataGridView: View {
                                 HeaderView(columns: columns, widths: widths)
                             }
                         }
-                        .frame(minWidth: totalWidth)
+                        .frame(minWidth: totalWidth, alignment: .topLeading)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .overlay(alignment: .topTrailing) {
                         if appState.isLoadingData {
                             ProgressView()

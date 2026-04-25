@@ -49,8 +49,17 @@ struct QueryBuilder: Sendable {
             }
         }
 
+        // Build SELECT list — cast every column to text so PG formats values
+        // for us (timestamps, bigints, booleans, etc.) instead of binary wire format
+        let selectColumns = table.columns.map { col in
+            "\"\(col.name)\"::text"
+        }.joined(separator: ", ")
+
+        // Fallback: if no columns known, use *
+        let selectList = table.columns.isEmpty ? "*" : selectColumns
+
         let sql = """
-            SELECT * FROM \(qualifiedTable)
+            SELECT \(selectList) FROM \(qualifiedTable)
             \(whereClause)
             \(orderClause)
             LIMIT \(limit) OFFSET \(offset)
