@@ -1,7 +1,25 @@
 import SwiftUI
+import AppKit
+
+/// AppDelegate to ensure the app is properly activated when running via `swift run`.
+/// Without this, macOS treats the unbundled executable as a background process
+/// and silently drops all keyboard events — making TextFields non-editable.
+class GlintAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Ensure we're a regular foreground app (needed for SPM executables)
+        NSApp.setActivationPolicy(.regular)
+        // Force activation so the window becomes key and accepts keyboard input
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+}
 
 @main
 struct GlintApp: App {
+    @NSApplicationDelegateAdaptor(GlintAppDelegate.self) var appDelegate
     @State private var appState = AppState()
 
     var body: some Scene {
