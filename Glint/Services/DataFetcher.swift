@@ -49,7 +49,7 @@ actor DataFetcher {
 
         let rawRows = try await connection.queryAll(sql)
         let resultColumns = buildResultColumns(from: rawRows, tableColumns: table.columns)
-        let rows = materializeRows(rawRows, columns: resultColumns)
+        let rows = Self.materializeRows(rawRows, columns: resultColumns)
         let executionTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
 
         return QueryResult(
@@ -111,27 +111,120 @@ actor DataFetcher {
     }
 
     // MARK: - Row Materialization
+    func fetchTablePage(table: TableInfo, limit: Int, offset: Int) async throws -> QueryResult {
+        let safeSchema = SQLSanitizer.quoteIdentifier(table.schema)
+        let safeTable = SQLSanitizer.quoteIdentifier(table.name)
 
-    private func materializeRows(_ pgRows: [PostgresRow], columns: [ColumnInfo]) -> [TableRow] {
+        var orderBy = ""
+        if let pk = table.columns.first(where: { $0.isPrimaryKey }) {
+            orderBy = "ORDER BY \(SQLSanitizer.quoteIdentifier(pk.name)) ASC"
+        }
+
+        let query = "SELECT * FROM \(safeSchema).\(safeTable) \(orderBy) LIMIT \(limit) OFFSET \(offset)"
+        
+        let pgRows = try await connection.queryAll(query)
+        
+        let columns: [ColumnInfo]
+        if table.columns.isEmpty && !pgRows.isEmpty {
+            let cells = pgRows[0].makeRandomAccess()
+            columns = (0..<cells.count).map { i in
+                ColumnInfo(
+                    name: cells[i].columnName,
+                    tableName: table.name,
+                    dataType: "text",
+                    udtName: "text",
+                    isNullable: true,
+                    isPrimaryKey: false,
+                    hasDefault: false,
+                    defaultValue: nil,
+                    characterMaxLength: nil,
+                    numericPrecision: nil,
+                    ordinalPosition: i
+                )
+            }
+        } else {
+            columns = table.columns
+        }
+        
+        let totalCount = try await estimatedRowCount(schema: table.schema, table: table.name)
+        
+        let tableRows = Self.materializeRows(pgRows, columns: columns)
+        // Note: Execution time isn't strictly tracked here as it's an internal fetch, defaulting to 0
+        return QueryResult(
+            rows: tableRows,
+            columns: columns,
+            totalCount: totalCount,
+            pageSize: limit,
+            currentOffset: offset,
+            executionTimeMs: 0,
+            query: query
+        )
+    }
+    static func materializeRows(_ pgRows: [PostgresRow], columns: [ColumnInfo]) -> [TableRow] {
         pgRows.map { pgRow in
             let cells = pgRow.makeRandomAccess()
             let values = (0..<cells.count).map { i -> CellValue in
                 let cell = cells[i]
-                let rawValue: String?
-                if var bytes = cell.bytes {
-      
-                    if let str = try? cell.decode(String.self) {
-                        rawValue = str
-                    } else {
-                        rawValue = bytes.readString(length: bytes.readableBytes)
-                    }
-                } else {
-                    rawValue = nil
-                }
+                let rawValue = decodeCell(cell)
                 let dataType = columns.indices.contains(i) ? columns[i].udtName : "text"
                 return CellValue(columnName: cell.columnName, rawValue: rawValue, dataType: dataType)
             }
             return TableRow(values: values)
         }
+    }
+
+    static func decodeCell(_ cell: PostgresCell) -> String? {
+        guard var bytes = cell.bytes else { return nil }
+
+        // Attempt strong typed decoding based on PostgresDataType
+        switch cell.dataType {
+        case .bool:
+            return (try? cell.decode(Bool.self)) == true ? "true" : "false"
+        case .int2:
+            if let v = try? cell.decode(Int16.self) { return String(v) }
+        case .int4:
+            if let v = try? cell.decode(Int32.self) { return String(v) }
+        case .int8:
+            if let v = try? cell.decode(Int64.self) { return String(v) }
+        case .float4:
+            if let v = try? cell.decode(Float.self) { return String(v) }
+        case .float8:
+            if let v = try? cell.decode(Double.self) { return String(v) }
+        case .numeric:
+            if let v = try? cell.decode(Decimal.self) { return "\(v)" }
+        case .uuid:
+            if let v = try? cell.decode(UUID.self) { return v.uuidString }
+        case .date:
+            if let v = try? cell.decode(Date.self) {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                return formatter.string(from: v)
+            }
+        case .timestamp, .timestamptz:
+            if let v = try? cell.decode(Date.self) {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                return formatter.string(from: v)
+            }
+        case .jsonb:
+            // JSONB binary format starts with version 1 byte
+            if bytes.readableBytes > 0 {
+                let version = bytes.readInteger(as: UInt8.self)
+                if version == 1 {
+                    return bytes.readString(length: bytes.readableBytes)
+                }
+            }
+        default:
+            break
+        }
+
+        // Standard string fallback for text, varchar, json, enums, etc.
+        if let str = try? cell.decode(String.self) {
+            return str
+        }
+        
+        // Final ultimate fallback: just read whatever bytes are left as UTF-8
+        return bytes.readString(length: bytes.readableBytes)
     }
 }

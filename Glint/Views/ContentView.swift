@@ -280,8 +280,8 @@ private struct BottomBar: View {
                 HStack(spacing: 6) {
                     Button { appState.insertNewRow() } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .bold))
-                            .frame(width: 26, height: 22)
+                            .font(.system(size: 13, weight: .bold))
+                            .frame(width: 32, height: 28)
                     }
                     .buttonStyle(.plain)
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
@@ -290,8 +290,8 @@ private struct BottomBar: View {
                     
                     Button { Task { await appState.deleteSelectedRows() } } label: {
                         Image(systemName: "minus")
-                            .font(.system(size: 12, weight: .bold))
-                            .frame(width: 26, height: 22)
+                            .font(.system(size: 13, weight: .bold))
+                            .frame(width: 32, height: 28)
                     }
                     .buttonStyle(.plain)
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
@@ -303,7 +303,7 @@ private struct BottomBar: View {
             }
 
             Text(statusText)
-                .font(.system(size: 11))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -318,8 +318,8 @@ private struct BottomBar: View {
                 pagination
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 26)
+        .padding(.horizontal, 16)
+        .frame(height: 38)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
     }
@@ -353,15 +353,15 @@ private struct BottomBar: View {
     private var filterToggle: some View {
         let active = appState.showFilterBar || appState.hasActiveFilters
         return Button { appState.showFilterBar.toggle() } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: "line.3.horizontal.decrease")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                 Text("Filter")
-                    .font(.system(size: 12, weight: active ? .semibold : .medium))
+                    .font(.system(size: 13, weight: active ? .semibold : .medium))
             }
             .foregroundStyle(active ? .white : .primary)
-            .padding(.horizontal, 10)
-            .frame(height: 22)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
             .background(active ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(active ? .clear : Color.gray.opacity(0.2), lineWidth: 1))
         }
@@ -369,21 +369,25 @@ private struct BottomBar: View {
     }
 
     private var pagination: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 12) {
             Button { Task { await appState.previousPage() } } label: {
-                Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.left").font(.system(size: 13, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(appState.currentPage <= 1)
             .opacity(appState.currentPage <= 1 ? 0.4 : 1)
 
             Text("\(appState.currentPage) / \(appState.queryResult.totalPages)")
-                .font(.system(size: 11))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
 
             Button { Task { await appState.nextPage() } } label: {
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!appState.queryResult.hasMore)

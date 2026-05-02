@@ -11,6 +11,12 @@ import AppKit
 
 struct DataGridView: NSViewRepresentable {
     @Environment(AppState.self) var appState
+    
+    var customResult: QueryResult?
+    var customTable: TableInfo?
+    var isPickerMode: Bool = false
+    var initialSelection: String?
+    var onRowPicked: ((TableRow) -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -47,11 +53,11 @@ struct DataGridView: NSViewRepresentable {
         guard let tableView = scrollView.documentView as? NSTableView else { return }
         let coord = context.coordinator
 
-        let columns = appState.queryResult.columns
-        let rows = appState.queryResult.rows
+        let columns = customResult?.columns ?? appState.queryResult.columns
+        let rows = customResult?.rows ?? appState.queryResult.rows
 
         var enrichedMap: [String: ColumnInfo] = [:]
-        if let table = appState.selectedTable {
+        if let table = customTable ?? appState.selectedTable {
             for col in table.columns { enrichedMap[col.name] = col }
         }
 
@@ -65,15 +71,37 @@ struct DataGridView: NSViewRepresentable {
         coord.columns = columns
         coord.enrichedColumns = enrichedMap
         coord.appState = appState
+        coord.isPickerMode = isPickerMode
+        coord.initialSelection = initialSelection
+        coord.onRowPicked = onRowPicked
         tableView.delegate = coord
         tableView.dataSource = coord
 
-        let dataFingerprint = "\(rows.count)-\(rows.first?.id.uuidString ?? "")-\(rows.last?.id.uuidString ?? "")-\(appState.pendingEdits.count)"
+        if isPickerMode {
+            tableView.target = coord
+            tableView.doubleAction = #selector(GridCoordinator.rowDoubleClicked(_:))
+            tableView.allowsMultipleSelection = false
+        } else {
+            tableView.target = nil
+            tableView.doubleAction = nil
+            tableView.allowsMultipleSelection = true
+        }
+
+        let pendingCount = isPickerMode ? 0 : appState.pendingEdits.count
+        let dataFingerprint = "\(rows.count)-\(rows.first?.id.uuidString ?? "")-\(rows.last?.id.uuidString ?? "")-\(pendingCount)"
         if coord.lastDataFingerprint != dataFingerprint {
             coord.rows = rows
-            coord.pendingEditKeys = Set(appState.pendingEdits.map { "\($0.rowId)-\($0.columnIndex)" })
+            coord.pendingEditKeys = isPickerMode ? [] : Set(appState.pendingEdits.map { "\($0.rowId)-\($0.columnIndex)" })
             tableView.reloadData()
             coord.lastDataFingerprint = dataFingerprint
+            
+            if isPickerMode && !coord.hasScrolledToInitialSelection, let target = coord.initialSelection {
+                if let idx = rows.firstIndex(where: { $0.values.contains(where: { $0.rawValue == target }) }) {
+                    tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
+                    DispatchQueue.main.async { tableView.scrollRowToVisible(idx) }
+                }
+                coord.hasScrolledToInitialSelection = true
+            }
         }
 
         if coord.needsInitialSizing && !rows.isEmpty {
@@ -145,6 +173,11 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
     var lastDataFingerprint = ""
     var pendingEditKeys: Set<String> = []
     var needsInitialSizing = true
+    var currentPopover: NSPopover?
+    var isPickerMode: Bool = false
+    var initialSelection: String?
+    var hasScrolledToInitialSelection = false
+    var onRowPicked: ((TableRow) -> Void)?
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
@@ -160,23 +193,29 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
         let meta = enrichedColumns[colName]
         let pending = hasPendingEdit(row: row, col: colIndex)
 
-        if meta?.isBoolean == true {
-            return CellFactory.boolean(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
-        }
-        if let enumValues = meta?.enumValues, !enumValues.isEmpty {
-            return CellFactory.enumPicker(cell: cell, row: row, col: colIndex, values: enumValues, pending: pending, delegate: self)
-        }
-        if let fk = meta?.foreignKey {
-            return CellFactory.foreignKey(cell: cell, row: row, col: colIndex, fk: fk, pending: pending, delegate: self)
+        if !isPickerMode {
+            if meta?.isBoolean == true {
+                return CellFactory.boolean(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
+            }
+            if let enumValues = meta?.enumValues, !enumValues.isEmpty {
+                return CellFactory.enumPicker(cell: cell, row: row, col: colIndex, values: enumValues, pending: pending, delegate: self)
+            }
+            if cell.dataType == "json" || cell.dataType == "jsonb" {
+                return CellFactory.jsonViewer(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
+            }
+            if let fk = meta?.foreignKey {
+                return CellFactory.foreignKey(cell: cell, row: row, col: colIndex, fk: fk, pending: pending, delegate: self)
+            }
         }
 
-        let reuseId = NSUserInterfaceItemIdentifier("TextCell")
+        let reuseId = NSUserInterfaceItemIdentifier("TextCell\(isPickerMode ? "Picker" : "")")
         if let reused = tableView.makeView(withIdentifier: reuseId, owner: nil) as? NSTableCellView,
            let field = reused.textField {
             field.stringValue = cell.displayValue
             field.font = cell.isNull ? .systemFont(ofSize: 12) : .monospacedSystemFont(ofSize: 12, weight: .regular)
             field.textColor = cell.isNull ? .tertiaryLabelColor : .labelColor
             field.tag = CellFactory.encodeTag(row: row, col: colIndex)
+            field.isEditable = !isPickerMode
             field.delegate = self
             reused.wantsLayer = true
             reused.layer?.backgroundColor = pending ? NSColor.systemYellow.withAlphaComponent(0.12).cgColor : nil
@@ -185,6 +224,9 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
         let view = CellFactory.text(cell: cell, row: row, col: colIndex, pending: pending, delegate: self)
         view.identifier = reuseId
+        if isPickerMode {
+            view.subviews.compactMap { $0 as? NSTextField }.first?.isEditable = false
+        }
         return view
     }
 
@@ -230,6 +272,12 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     // MARK: - Actions
 
+    @objc func rowDoubleClicked(_ sender: NSTableView) {
+        let row = sender.clickedRow
+        guard row >= 0 && row < rows.count else { return }
+        onRowPicked?(rows[row])
+    }
+
     @objc func duplicateRow(_ sender: NSMenuItem) {
         guard let appState = appState else { return }
         let row = sender.tag
@@ -254,22 +302,93 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
         let cell = rows[row].values[col]
         guard let fk = enrichedColumns[cell.columnName]?.foreignKey,
               let value = cell.rawValue,
-              let appState else { return }
+              let appState = self.appState else { return }
 
-        Task {
-            for schema in appState.schemas {
-                if let refTable = schema.tables.first(where: { $0.name == fk.referencedTable }) {
-                    await appState.selectTable(refTable)
-                    await appState.addFilter(FilterConstraint(
-                        columnName: fk.referencedColumn,
-                        columnType: "text",
-                        operation: .equals,
-                        value: .text(value)
-                    ))
-                    return
-                }
-            }
+        guard let refTable = appState.schemas.lazy.flatMap({ $0.tables }).first(where: { $0.name == fk.referencedTable }) else {
+            return
         }
+
+        let rowId = rows[row].id
+        
+        currentPopover?.close()
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = true
+        self.currentPopover = popover
+        
+        let popoverView = ForeignKeyPreviewPopover(
+            table: refTable,
+            referencedColumn: fk.referencedColumn,
+            value: value,
+            onClose: { [weak popover] in popover?.close() },
+            onPick: { [weak appState, weak popover] pickedValue in
+                guard let appState else { return }
+                appState.pendingEdits.removeAll { $0.rowId == rowId && $0.columnIndex == col }
+                if pickedValue != cell.rawValue {
+                    appState.pendingEdits.append(PendingEdit(
+                        rowId: rowId,
+                        columnIndex: col,
+                        columnName: cell.columnName,
+                        originalValue: cell.rawValue,
+                        newValue: pickedValue
+                    ))
+                }
+                popover?.close()
+            }
+        ).environment(appState)
+        
+        popover.contentViewController = NSHostingController(rootView: popoverView)
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
+
+    @objc func jsonLinkClicked(_ sender: NSButton) {
+        openJSONEditor(tag: sender.tag, sourceView: sender)
+    }
+
+    @objc func jsonFieldDoubleClicked(_ gesture: NSClickGestureRecognizer) {
+        guard let view = gesture.view else { return }
+        openJSONEditor(tag: view.tag, sourceView: view)
+    }
+
+    private func openJSONEditor(tag: Int, sourceView: NSView) {
+        let (row, col) = CellFactory.decodeTag(tag)
+        guard row < rows.count, col < rows[row].values.count else { return }
+
+        let cell = rows[row].values[col]
+        guard let appState = self.appState else { return }
+
+        let rowId = rows[row].id
+        
+        currentPopover?.close()
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = true
+        self.currentPopover = popover
+        
+        let popoverView = JSONEditorPopover(
+            columnName: cell.columnName,
+            initialValue: cell.rawValue,
+            onClose: { [weak popover] in popover?.close() },
+            onSave: { [weak appState, weak popover] pickedValue in
+                guard let appState else { return }
+                appState.pendingEdits.removeAll { $0.rowId == rowId && $0.columnIndex == col }
+                if pickedValue != cell.rawValue {
+                    appState.pendingEdits.append(PendingEdit(
+                        rowId: rowId,
+                        columnIndex: col,
+                        columnName: cell.columnName,
+                        originalValue: cell.rawValue,
+                        newValue: pickedValue
+                    ))
+                }
+                popover?.close()
+            }
+        ).environment(appState)
+        
+        popover.contentViewController = NSHostingController(rootView: popoverView)
+        popover.show(relativeTo: sourceView.bounds, of: sourceView, preferredEdge: .minY)
     }
 
     // MARK: - Helpers
@@ -356,29 +475,68 @@ enum CellFactory {
     static func foreignKey(cell: CellValue, row: Int, col: Int, fk: ForeignKeyRef, pending: Bool, delegate: GridCoordinator) -> NSView {
         let view = NSView()
 
-        let field = editableTextField(cell: cell, row: row, col: col, delegate: delegate)
-        view.addSubview(field)
-
         let link = NSButton(title: "", target: delegate, action: #selector(GridCoordinator.fkLinkClicked(_:)))
-        link.image = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: nil)
+        link.image = NSImage(systemSymbolName: "tablecells.fill", accessibilityDescription: nil)
         link.imageScaling = .scaleProportionallyDown
         link.isBordered = false
         link.bezelStyle = .inline
-        link.contentTintColor = .systemBlue
+        link.contentTintColor = NSColor.tertiaryLabelColor // Subtle, hover will highlight natively
         link.tag = encodeTag(row: row, col: col)
-        link.toolTip = "→ \(fk.referencedTable).\(fk.referencedColumn)"
+        link.toolTip = "Preview → \(fk.referencedTable).\(fk.referencedColumn)"
         link.translatesAutoresizingMaskIntoConstraints = false
-
         view.addSubview(link)
 
+        let field = editableTextField(cell: cell, row: row, col: col, delegate: delegate)
+        view.addSubview(field)
+
         NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
-            field.trailingAnchor.constraint(equalTo: link.leadingAnchor, constant: -2),
-            field.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            link.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            link.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
             link.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            link.widthAnchor.constraint(equalToConstant: 16),
-            link.heightAnchor.constraint(equalToConstant: 16),
+            link.widthAnchor.constraint(equalToConstant: 14),
+            link.heightAnchor.constraint(equalToConstant: 14),
+            
+              field.leadingAnchor.constraint(equalTo: link.trailingAnchor, constant: 4),
+            field.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            field.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+
+        applyPendingStyle(view, pending: pending)
+        return view
+    }
+
+    static func jsonViewer(cell: CellValue, row: Int, col: Int, pending: Bool, delegate: GridCoordinator) -> NSView {
+        let view = NSView()
+
+        let link = NSButton(title: "", target: delegate, action: #selector(GridCoordinator.jsonLinkClicked(_:)))
+        link.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
+        link.imageScaling = .scaleProportionallyDown
+        link.isBordered = false
+        link.bezelStyle = .inline
+        link.contentTintColor = NSColor.tertiaryLabelColor
+        link.tag = encodeTag(row: row, col: col)
+        link.toolTip = "Edit JSON"
+        link.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(link)
+
+        let field = editableTextField(cell: cell, row: row, col: col, delegate: delegate)
+        field.isEditable = false // Disable inline edit for JSON
+        field.tag = encodeTag(row: row, col: col)
+        
+        let click = NSClickGestureRecognizer(target: delegate, action: #selector(GridCoordinator.jsonFieldDoubleClicked(_:)))
+        click.numberOfClicksRequired = 2
+        field.addGestureRecognizer(click)
+        
+        view.addSubview(field)
+
+        NSLayoutConstraint.activate([
+            link.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            link.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            link.widthAnchor.constraint(equalToConstant: 14),
+            link.heightAnchor.constraint(equalToConstant: 14),
+            
+            field.leadingAnchor.constraint(equalTo: link.trailingAnchor, constant: 4),
+            field.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            field.centerYAnchor.constraint(equalTo: view.centerYAnchor)
         ])
 
         applyPendingStyle(view, pending: pending)

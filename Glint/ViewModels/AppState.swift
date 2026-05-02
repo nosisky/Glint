@@ -56,7 +56,7 @@ final class AppState {
     
     var pageSize: Int {
         let stored = UserDefaults.standard.integer(forKey: "glint.pageSize")
-        return stored > 0 ? stored : 200
+        return stored > 0 ? stored : 20
     }
     
     // MARK: - Workspace Tabs
@@ -732,31 +732,8 @@ final class AppState {
                     columns = []
                 }
 
-                // Materialize rows
-                let rows: [TableRow] = rawRows.map { pgRow in
-                    let cells = pgRow.makeRandomAccess()
-                    let values = (0..<cells.count).map { i -> CellValue in
-                        let cell = cells[i]
-                        let rawValue: String?
-                        if var bytes = cell.bytes {
-                            // Try String decode first; fall back to raw bytes for
-                            // date, timestamp, bytea, uuid, and other non-text types
-                            if let str = try? cell.decode(String.self) {
-                                rawValue = str
-                            } else {
-                                rawValue = bytes.readString(length: bytes.readableBytes)
-                            }
-                        } else {
-                            rawValue = nil
-                        }
-                        return CellValue(
-                            columnName: cell.columnName,
-                            rawValue: rawValue,
-                            dataType: cell.dataType.rawValue.description
-                        )
-                    }
-                    return TableRow(values: values)
-                }
+                // Materialize rows using the robust decoder
+                let rows: [TableRow] = DataFetcher.materializeRows(rawRows, columns: columns)
 
                 if !queryWriteMode {
                     try await conn.execute("COMMIT")
