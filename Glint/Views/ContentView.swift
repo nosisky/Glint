@@ -412,18 +412,30 @@ struct WelcomeView: View {
         VStack(spacing: 14) {
             Spacer()
 
-            Image(systemName: "tablecells")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(.tertiary)
+            if let iconPath = Bundle.module.path(forResource: "AppIcon", ofType: "png"),
+               let nsImage = NSImage(contentsOfFile: iconPath) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .frame(width: 80, height: 80)
+            } else {
+                Image(systemName: "tablecells")
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(.tertiary)
+            }
 
-            Text("Glint")
-                .font(.system(size: 22, weight: .semibold))
+            Text("Glint Database Client")
+                .font(.system(size: 24, weight: .semibold))
+                
+            Text("By Nas Abdulrasaq")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
 
             Text(appState.savedConnections.isEmpty
                  ? "Add a connection to get started."
                  : "Choose a connection from the sidebar.")
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 8)
 
             Button("New Connection") {
                 appState.showConnectionSheet = true
@@ -432,7 +444,15 @@ struct WelcomeView: View {
             .padding(.top, 4)
 
             Spacer()
-            Spacer()
+            
+            VStack(spacing: 4) {
+                Text("Built by Nas")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Link("github.com/nosisky", destination: URL(string: "https://github.com/nosisky")!)
+                    .font(.system(size: 11))
+            }
+            .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(GlintDesign.appBackground)
@@ -647,8 +667,11 @@ struct SelectTablePrompt: View {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 28))
                 .foregroundStyle(.quaternary)
-            Text("Select a table")
+            Text("Select a table from the sidebar")
                 .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("Glint Workspace by Nas")
+                .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

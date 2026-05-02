@@ -36,6 +36,9 @@ struct ConnectionSheet: View {
                 Text("New Connection")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
+                Text("Glint by Nas")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

@@ -38,6 +38,33 @@ struct GlintApp: App {
         .windowToolbarStyle(.unified(showsTitle: true))
         .defaultSize(width: 1280, height: 800)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Glint") {
+                    let creditsString = "Created by Nas (Nosisky)\nGitHub: https://github.com/nosisky"
+                    let creditsText = NSMutableAttributedString(string: creditsString)
+                    let fullRange = NSRange(location: 0, length: creditsString.utf16.count)
+                    creditsText.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), range: fullRange)
+                    
+                    if let linkRange = creditsString.range(of: "https://github.com/nosisky") {
+                        creditsText.addAttribute(.link, value: "https://github.com/nosisky", range: NSRange(linkRange, in: creditsString))
+                    }
+
+                    var options: [NSApplication.AboutPanelOptionKey: Any] = [
+                        .credits: creditsText,
+                        NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): "© \(Calendar.current.component(.year, from: Date())) Nas Abdulrasaq",
+                        NSApplication.AboutPanelOptionKey(rawValue: "ApplicationVersion"): "1.0.0",
+                        NSApplication.AboutPanelOptionKey(rawValue: "Version"): "1.0"
+                    ]
+                    
+                    if let iconPath = Bundle.module.path(forResource: "AppIcon", ofType: "png"),
+                       let iconImage = NSImage(contentsOfFile: iconPath) {
+                        options[.applicationIcon] = iconImage
+                    }
+
+                    NSApplication.shared.orderFrontStandardAboutPanel(options: options)
+                }
+            }
+
             CommandGroup(replacing: .newItem) {
                 Button("New Connection…") { appState.showConnectionSheet = true }
                     .keyboardShortcut("n", modifiers: [.command])
@@ -92,6 +119,19 @@ struct GlintApp: App {
                     Button("Connect…") { appState.showConnectionSheet = true }
                 }
             }
+            
+            CommandGroup(replacing: .help) {
+                Button("Visit Glint on GitHub") {
+                    if let url = URL(string: "https://github.com/nosisky/Glint") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                Button("Contact Author (@nosisky)") {
+                    if let url = URL(string: "https://github.com/nosisky") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
         }
 
         Window("SQL Console", id: "sql-console") {
@@ -135,6 +175,39 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .tabItem { Label("General", systemImage: "gear") }
+
+            Form {
+                VStack(spacing: 20) {
+                    if let iconPath = Bundle.module.path(forResource: "AppIcon", ofType: "png"),
+                       let nsImage = NSImage(contentsOfFile: iconPath) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .frame(width: 64, height: 64)
+                    } else {
+                        Image(systemName: "database")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 48, height: 48)
+                            .foregroundColor(.accentColor)
+                    }
+                    
+                    VStack(spacing: 4) {
+                        Text("Glint Database Client")
+                            .font(.headline)
+                        Text("Version 1.0.0")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    VStack(spacing: 8) {
+                        Text("Engineered by **Nas Abdulrasaq**")
+                        Link("github.com/nosisky", destination: URL(string: "https://github.com/nosisky")!)
+                    }
+                    .font(.body)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .tabItem { Label("About", systemImage: "person.crop.circle") }
         }
     }
 }
