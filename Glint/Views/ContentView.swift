@@ -14,7 +14,9 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     TabBarView()
                     
-                    if appState.selectedTable != nil {
+                    if appState.isQueryEditorOpen {
+                        QueryEditorView()
+                    } else if appState.selectedTable != nil {
                         TableContentArea()
                     } else if let function = appState.selectedFunction {
                         FunctionDetailView(function: function)
@@ -41,6 +43,14 @@ struct ContentView: View {
                             .disabled(appState.isExporting)
                             .help("Export Table as CSV")
                         }
+                        
+                        Button {
+                            appState.toggleQueryEditor()
+                        } label: {
+                            Label("SQL Query", systemImage: "terminal")
+                        }
+                        .help("Toggle SQL Query Editor")
+                        .keyboardShortcut("e", modifiers: [.command, .shift])
                         
                         Button {
                             Task { await appState.loadSchema() }
@@ -118,8 +128,10 @@ struct TableContentArea: View {
                         .id(table.id) // Forces view recreation and .task re-execution when table changes
                 }
             case .ddl:
-                DDLView()
-                    .id(appState.selectedTable?.id)
+                if let table = appState.selectedTable {
+                    DDLView(table: table)
+                        .id(table.id)
+                }
             }
 
             BottomBar(tab: $state.activeTab)
@@ -372,41 +384,7 @@ private struct BottomBar: View {
     }
 }
 
-// MARK: - DDL View
 
-private struct DDLView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if let table = appState.selectedTable {
-            ScrollView {
-                Text(generateDDL(table))
-                    .font(.system(size: 13, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            }
-        }
-    }
-
-    private func generateDDL(_ table: TableInfo) -> String {
-        let qTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
-        var ddl = "CREATE TABLE \(qTable) (\n"
-        for (i, col) in table.columns.enumerated() {
-            ddl += "    \(SQLSanitizer.quoteIdentifier(col.name)) \(col.dataType)"
-            if !col.isNullable { ddl += " NOT NULL" }
-            if let def = col.defaultValue { ddl += " DEFAULT \(def)" }
-            if i < table.columns.count - 1 { ddl += "," }
-            ddl += "\n"
-        }
-        let pks = table.columns.filter(\.isPrimaryKey).map { SQLSanitizer.quoteIdentifier($0.name) }
-        if !pks.isEmpty {
-            ddl += "    , PRIMARY KEY (\(pks.joined(separator: ", ")))\n"
-        }
-        ddl += ");\n"
-        return ddl
-    }
-}
 
 // MARK: - Prompts
 

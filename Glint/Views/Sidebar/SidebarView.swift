@@ -53,6 +53,8 @@ private struct ConnectedSidebar: View {
                 get: { sidebarTab == .tables ? appState.selectedTable?.id : appState.selectedFunction?.id },
                 set: { id in
                     guard let id else { return }
+                    // Close query editor when navigating to a table/function
+                    if appState.isQueryEditorOpen { appState.isQueryEditorOpen = false }
                     if sidebarTab == .tables {
                         if id == appState.selectedTable?.id { return }
                         let allTables = appState.schemas.flatMap(\.tables)

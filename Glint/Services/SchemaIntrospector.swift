@@ -107,13 +107,17 @@ actor SchemaIntrospector {
 
         return rows.compactMap { row -> ColumnInfo? in
             let cols = row.makeRandomAccess()
-            guard let name = try? cols[0].decode(String.self),
-                  let dataType = try? cols[1].decode(String.self),
-                  let udtName = try? cols[2].decode(String.self),
-                  let isNullable = try? cols[3].decode(Bool.self),
-                  let ordinal = try? cols[8].decode(Int.self),
-                  let isPK = try? cols[9].decode(Bool.self)
-            else { return nil }
+            let name = try? cols[0].decode(String.self)
+            let dataType = try? cols[1].decode(String.self)
+            let udtName = try? cols[2].decode(String.self)
+            let isNullable = try? cols[3].decode(Bool.self)
+            let ordinal = (try? cols[7].decode(Int16.self)).map(Int.init) ?? (try? cols[7].decode(Int.self)) ?? 0
+            let isPK = try? cols[8].decode(Bool.self)
+            
+            guard let name = name, let dataType = dataType, let udtName = udtName, let isNullable = isNullable, let isPK = isPK else {
+                print("[Glint] Failed to decode column. name=\(String(describing: name)), type=\(String(describing: dataType))")
+                return nil
+            }
 
             return ColumnInfo(
                 name: name,

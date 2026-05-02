@@ -1,4 +1,5 @@
 import SwiftUI
+import PostgresNIO
 
 @MainActor
 @Observable
@@ -159,6 +160,36 @@ final class AppState {
     var selectedRowIds: Set<UUID> {
         get { workspaceTabs[activeTabIndex].selectedRowIds }
         set { workspaceTabs[activeTabIndex].selectedRowIds = newValue }
+    }
+
+    // Query Editor (per-tab)
+    var isQueryEditorOpen: Bool {
+        get { workspaceTabs[activeTabIndex].isQueryEditorOpen }
+        set { workspaceTabs[activeTabIndex].isQueryEditorOpen = newValue }
+    }
+    var customQueryText: String {
+        get { workspaceTabs[activeTabIndex].customQueryText }
+        set { workspaceTabs[activeTabIndex].customQueryText = newValue }
+    }
+    var customQueryResult: QueryResult? {
+        get { workspaceTabs[activeTabIndex].customQueryResult }
+        set { workspaceTabs[activeTabIndex].customQueryResult = newValue }
+    }
+    var queryExecutionError: String? {
+        get { workspaceTabs[activeTabIndex].queryExecutionError }
+        set { workspaceTabs[activeTabIndex].queryExecutionError = newValue }
+    }
+    var isExecutingQuery: Bool {
+        get { workspaceTabs[activeTabIndex].isExecutingQuery }
+        set { workspaceTabs[activeTabIndex].isExecutingQuery = newValue }
+    }
+    var queryWriteMode: Bool {
+        get { workspaceTabs[activeTabIndex].queryWriteMode }
+        set { workspaceTabs[activeTabIndex].queryWriteMode = newValue }
+    }
+    var queryHistory: [QueryHistoryEntry] {
+        get { workspaceTabs[activeTabIndex].queryHistory }
+        set { workspaceTabs[activeTabIndex].queryHistory = newValue }
     }
 
     // UI
@@ -543,7 +574,6 @@ final class AppState {
         selectedFunction = nil
         selectedTable = table // Set immediately to eliminate SwiftUI binding flash
         
-        activeTab = .content
         currentPage = 1
         filters = []
         globalSearchText = ""
@@ -608,6 +638,171 @@ final class AppState {
     func goToPage(_ page: Int) async {
         currentPage = max(1, min(page, queryResult.totalPages))
         await fetchTableData()
+    }
+
+    // MARK: - Query Editor
+
+    func toggleQueryEditor() {
+        isQueryEditorOpen.toggle()
+        if isQueryEditorOpen {
+            selectedTable = nil
+            selectedFunction = nil
+        }
+    }
+
+    func executeCustomQuery(_ sql: String) async {
+        let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let pool = connectionPool else {
+            queryExecutionError = "No active database connection."
+            return
+        }
+
+        // SECURITY: Reject multi-statement queries in read-only mode.
+        if !queryWriteMode {
+            let statementsOutsideStrings = trimmed.replacingOccurrences(
+                of: "'[^']*'", with: "", options: .regularExpression
+            )
+            let semicolonCount = statementsOutsideStrings.filter({ $0 == ";" }).count
+            // Allow a trailing semicolon (common habit) but reject more
+            let strippedTrailing = statementsOutsideStrings.trimmingCharacters(in: .whitespacesAndNewlines)
+            let endsWithSemicolon = strippedTrailing.hasSuffix(";")
+            if semicolonCount > (endsWithSemicolon ? 1 : 0) {
+                queryExecutionError = "Multi-statement queries are not allowed in Read Only mode. Enable Write Mode to execute multiple statements."
+                return
+            }
+        }
+
+        isExecutingQuery = true
+        queryExecutionError = nil
+        customQueryResult = nil
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let maxRows = 10_000 // Safety cap to prevent OOM on production databases
+
+        do {
+            let conn = try await pool.getConnection()
+
+            // Safety: wrap in a read-only transaction unless write mode is enabled
+            if !queryWriteMode {
+                try await conn.execute("BEGIN READ ONLY")
+            }
+
+            do {
+                let rowSequence = try await conn.query(trimmed)
+                var rawRows: [PostgresRow] = []
+                var truncated = false
+                for try await row in rowSequence {
+                    if rawRows.count >= maxRows {
+                        truncated = true
+                        continue
+                    }
+                    rawRows.append(row)
+                }
+                let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+                // Materialize columns from the first row
+                let columns: [ColumnInfo]
+                if let firstRow = rawRows.first {
+                    let cells = firstRow.makeRandomAccess()
+                    columns = (0..<cells.count).map { i in
+                        ColumnInfo(
+                            name: cells[i].columnName,
+                            tableName: "",
+                            dataType: "text",
+                            udtName: "text",
+                            isNullable: true,
+                            isPrimaryKey: false,
+                            hasDefault: false,
+                            defaultValue: nil,
+                            characterMaxLength: nil,
+                            numericPrecision: nil,
+                            ordinalPosition: i
+                        )
+                    }
+                } else {
+                    columns = []
+                }
+
+                // Materialize rows
+                let rows: [TableRow] = rawRows.map { pgRow in
+                    let cells = pgRow.makeRandomAccess()
+                    let values = (0..<cells.count).map { i -> CellValue in
+                        let cell = cells[i]
+                        let rawValue: String?
+                        if var bytes = cell.bytes {
+                            // Try String decode first; fall back to raw bytes for
+                            // date, timestamp, bytea, uuid, and other non-text types
+                            if let str = try? cell.decode(String.self) {
+                                rawValue = str
+                            } else {
+                                rawValue = bytes.readString(length: bytes.readableBytes)
+                            }
+                        } else {
+                            rawValue = nil
+                        }
+                        return CellValue(
+                            columnName: cell.columnName,
+                            rawValue: rawValue,
+                            dataType: cell.dataType.rawValue.description
+                        )
+                    }
+                    return TableRow(values: values)
+                }
+
+                if !queryWriteMode {
+                    try await conn.execute("COMMIT")
+                }
+
+                let displayQuery = truncated
+                    ? "\(trimmed)\n-- Results truncated to \(maxRows) rows"
+                    : trimmed
+
+                let result = QueryResult(
+                    rows: rows,
+                    columns: columns,
+                    totalCount: Int64(rows.count),
+                    pageSize: rows.count,
+                    currentOffset: 0,
+                    executionTimeMs: durationMs,
+                    query: displayQuery
+                )
+                customQueryResult = result
+
+                // Record to history
+                queryHistory.insert(QueryHistoryEntry(
+                    sql: trimmed,
+                    durationMs: durationMs,
+                    rowCount: Int64(rows.count)
+                ), at: 0)
+
+                // Cap history at 50 entries
+                if queryHistory.count > 50 {
+                    queryHistory = Array(queryHistory.prefix(50))
+                }
+            } catch {
+                if !queryWriteMode {
+                    _ = try? await conn.execute("ROLLBACK")
+                }
+                throw error
+            }
+        } catch {
+            let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            queryExecutionError = error.localizedDescription
+
+            queryHistory.insert(QueryHistoryEntry(
+                sql: trimmed,
+                durationMs: durationMs,
+                wasError: true,
+                errorMessage: error.localizedDescription
+            ), at: 0)
+
+            if queryHistory.count > 50 {
+                queryHistory = Array(queryHistory.prefix(50))
+            }
+        }
+
+        isExecutingQuery = false
     }
 
     // MARK: - Sorting
@@ -715,7 +910,7 @@ final class AppState {
                 print("[Glint] Transaction committed: \(editsByRow.count) row(s) updated")
             } catch {
                 // SAFE-04: Rollback on any error
-                try? await conn.execute("ROLLBACK")
+                _ = try? await conn.execute("ROLLBACK")
                 throw error
             }
 
@@ -786,7 +981,7 @@ final class AppState {
             statusMessage = "Deleted \(rowsToDelete.count) row(s)"
             await fetchTableData()
         } catch {
-            try? await pool.getConnection().execute("ROLLBACK")
+            _ = try? await pool.getConnection().execute("ROLLBACK")
             statusMessage = "Delete failed: \(error.localizedDescription)"
         }
     }

@@ -109,7 +109,17 @@ actor DataFetcher {
             let cells = pgRow.makeRandomAccess()
             let values = (0..<cells.count).map { i -> CellValue in
                 let cell = cells[i]
-                let rawValue: String? = cell.bytes == nil ? nil : (try? cell.decode(String.self))
+                let rawValue: String?
+                if var bytes = cell.bytes {
+      
+                    if let str = try? cell.decode(String.self) {
+                        rawValue = str
+                    } else {
+                        rawValue = bytes.readString(length: bytes.readableBytes)
+                    }
+                } else {
+                    rawValue = nil
+                }
                 let dataType = columns.indices.contains(i) ? columns[i].udtName : "text"
                 return CellValue(columnName: cell.columnName, rawValue: rawValue, dataType: dataType)
             }

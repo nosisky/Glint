@@ -31,6 +31,15 @@ struct WorkspaceTab: Identifiable, Hashable, Equatable {
     var newRowIds: Set<UUID> = []
     var selectedRowIds: Set<UUID> = []
     
+    // Query Editor
+    var isQueryEditorOpen = false
+    var customQueryText: String = ""
+    var customQueryResult: QueryResult?
+    var queryExecutionError: String?
+    var isExecutingQuery = false
+    var queryWriteMode = false
+    var queryHistory: [QueryHistoryEntry] = []
+    
     // UI State
     var activeTab: ContentTab = .content
     
