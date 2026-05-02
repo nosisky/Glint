@@ -1,3 +1,11 @@
+//
+//  CSVExporter.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 import PostgresNIO
 import AppKit

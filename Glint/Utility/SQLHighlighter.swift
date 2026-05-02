@@ -1,3 +1,11 @@
+//
+//  SQLHighlighter.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// A lightweight SQL syntax highlighter using AttributedString and Regular Expressions.

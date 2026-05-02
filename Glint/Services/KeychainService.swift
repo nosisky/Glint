@@ -1,3 +1,11 @@
+//
+//  KeychainService.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 /// A secure storage service that uses obfuscated UserDefaults to avoid the constant

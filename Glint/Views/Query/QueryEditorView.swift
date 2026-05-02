@@ -1,3 +1,11 @@
+//
+//  QueryEditorView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// The main SQL query editor view with split-pane layout:

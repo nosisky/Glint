@@ -1,3 +1,11 @@
+//
+//  TableRow.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 struct TableRow: Identifiable, Hashable, Sendable {

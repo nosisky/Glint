@@ -1,3 +1,11 @@
+//
+//  RawConsoleView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// Opt-in raw SQL console — accessible from the menu (⌘⇧K).

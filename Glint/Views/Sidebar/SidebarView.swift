@@ -1,3 +1,11 @@
+//
+//  SidebarView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// Sidebar — Postico-style: search bar + flat table list.

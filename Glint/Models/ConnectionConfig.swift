@@ -1,3 +1,11 @@
+//
+//  ConnectionConfig.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 /// Represents a saved PostgreSQL connection configuration.

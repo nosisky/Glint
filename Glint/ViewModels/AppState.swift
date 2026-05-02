@@ -1,3 +1,11 @@
+//
+//  AppState.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 import PostgresNIO
 

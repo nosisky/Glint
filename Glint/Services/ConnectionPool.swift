@@ -1,3 +1,11 @@
+//
+//  ConnectionPool.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 /// Actor managing the active PostgreSQL connection.

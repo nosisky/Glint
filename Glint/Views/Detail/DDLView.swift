@@ -1,3 +1,11 @@
+//
+//  DDLView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 struct DDLView: View {

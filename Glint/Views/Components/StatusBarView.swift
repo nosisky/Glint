@@ -1,3 +1,11 @@
+//
+//  StatusBarView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// Lightweight status indicator. Not used in main toolbar anymore

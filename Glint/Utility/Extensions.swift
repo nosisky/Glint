@@ -1,3 +1,11 @@
+//
+//  Extensions.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 // MARK: - String Extensions

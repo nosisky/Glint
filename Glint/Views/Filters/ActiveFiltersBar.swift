@@ -1,3 +1,11 @@
+//
+//  ActiveFiltersBar.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// Active filters — simple horizontal pills.

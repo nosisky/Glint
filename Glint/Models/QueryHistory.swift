@@ -1,3 +1,11 @@
+//
+//  QueryHistory.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 /// A single entry in the per-tab query execution history.

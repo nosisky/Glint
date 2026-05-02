@@ -1,3 +1,11 @@
+//
+//  FunctionDetailView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 struct FunctionDetailView: View {

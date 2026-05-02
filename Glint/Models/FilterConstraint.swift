@@ -1,3 +1,11 @@
+//
+//  FilterConstraint.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 struct FilterConstraint: Identifiable, Hashable, Sendable {

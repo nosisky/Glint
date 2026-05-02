@@ -1,3 +1,11 @@
+//
+//  DataGridView.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 import AppKit
 
@@ -223,8 +231,7 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
     // MARK: - Actions
 
     @objc func duplicateRow(_ sender: NSMenuItem) {
-        guard let appState = appState,
-              let tableView = tableView else { return }
+        guard let appState = appState else { return }
         let row = sender.tag
         Task { await appState.duplicateRow(at: row) }
     }

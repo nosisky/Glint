@@ -1,3 +1,11 @@
+//
+//  ConnectionSheet.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// Connection form — simple, native-feeling.

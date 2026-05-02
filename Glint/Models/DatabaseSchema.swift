@@ -1,3 +1,11 @@
+//
+//  DatabaseSchema.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 struct DatabaseSchemaInfo: Identifiable, Hashable, Sendable {

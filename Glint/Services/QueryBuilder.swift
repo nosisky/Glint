@@ -1,3 +1,11 @@
+//
+//  QueryBuilder.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import Foundation
 
 struct QueryBuilder: Sendable {

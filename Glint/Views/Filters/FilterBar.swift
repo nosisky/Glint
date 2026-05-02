@@ -1,3 +1,11 @@
+//
+//  FilterBar.swift
+//  Glint
+//
+//  Created by Nas Abdulrasaq.
+//  GitHub: https://github.com/nosisky
+//
+
 import SwiftUI
 
 /// Postico-style filter bar — sits above the data grid.
