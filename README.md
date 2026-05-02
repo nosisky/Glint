@@ -2,7 +2,7 @@
 
 Glint is a fast, native PostgreSQL database client for macOS. It is built entirely in Swift and uses PostgresNIO to connect directly to your databases. 
 
-<video src="docs/glint-quick-demo.mp4" controls="controls" width="100%"></video>
+<video src="https://github.com/nosisky/Glint/raw/main/docs/glint-quick-demo.mp4" controls="controls" width="100%"></video>
 
 
 ## Features
