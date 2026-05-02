@@ -10,10 +10,12 @@ import Foundation
 
 struct TableRow: Identifiable, Hashable, Sendable {
     let id: UUID
+    let xmin: String?
     let values: [CellValue]
 
-    init(id: UUID = UUID(), values: [CellValue]) {
+    init(id: UUID = UUID(), xmin: String? = nil, values: [CellValue]) {
         self.id = id
+        self.xmin = xmin
         self.values = values
     }
 

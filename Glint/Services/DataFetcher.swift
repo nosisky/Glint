@@ -39,7 +39,7 @@ actor DataFetcher {
             offset: offset
         )
 
-        // PERF-01: Use estimated count for unfiltered views to avoid O(n) COUNT(*)
+        // Use estimated count for unfiltered queries to avoid O(N) full table scans
         let totalCount: Int64
         if hasFilters {
             totalCount = try await connection.queryScalar(countSQL)
@@ -63,7 +63,7 @@ actor DataFetcher {
         )
     }
 
-    /// PERF-01: Fast row count estimate from pg_class statistics.
+    /// Retrieves a fast row count estimate using pg_class statistics.
     /// Falls back to COUNT(*) if the estimate is unavailable or stale (0 or negative).
     private func estimatedRowCount(schema: String, table: String) async throws -> Int64 {
         let qSchema = SQLSanitizer.quoteLiteral(schema)
@@ -161,15 +161,23 @@ actor DataFetcher {
         )
     }
     static func materializeRows(_ pgRows: [PostgresRow], columns: [ColumnInfo]) -> [TableRow] {
-        pgRows.map { pgRow in
+        return pgRows.map { pgRow in
             let cells = pgRow.makeRandomAccess()
-            let values = (0..<cells.count).map { i -> CellValue in
+            var values: [CellValue] = []
+            var xmin: String? = nil
+            
+            for i in 0..<cells.count {
                 let cell = cells[i]
+                if cell.columnName == "xmin" {
+                    xmin = decodeCell(cell)
+                    continue
+                }
+                
                 let rawValue = decodeCell(cell)
-                let dataType = columns.indices.contains(i) ? columns[i].udtName : "text"
-                return CellValue(columnName: cell.columnName, rawValue: rawValue, dataType: dataType)
+                let dataType = columns.first(where: { $0.name == cell.columnName })?.udtName ?? "unknown"
+                values.append(CellValue(columnName: cell.columnName, rawValue: rawValue, dataType: dataType))
             }
-            return TableRow(values: values)
+            return TableRow(xmin: xmin, values: values)
         }
     }
 

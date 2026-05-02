@@ -47,7 +47,11 @@ struct JSONEditorPopover: View {
                     .background(GlintDesign.appBackground)
                     .padding(8)
                     .autocorrectionDisabled(true)
-                    .onChange(of: jsonText) { _, _ in
+                    .onChange(of: jsonText) { _, newValue in
+                        let sanitized = sanitize(newValue)
+                        if sanitized != jsonText {
+                            jsonText = sanitized
+                        }
                         formatError = nil // clear error on edit
                     }
                 
@@ -142,5 +146,13 @@ struct JSONEditorPopover: View {
             return text
         }
         return prettyString
+    }
+
+    private func sanitize(_ string: String) -> String {
+        return string
+            .replacingOccurrences(of: "“", with: "\"")
+            .replacingOccurrences(of: "”", with: "\"")
+            .replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "’", with: "'")
     }
 }

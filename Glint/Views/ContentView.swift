@@ -83,6 +83,11 @@ struct ContentView: View {
         .onAppear {
             appState.loadSavedConnections()
         }
+        .alert("Database Error", isPresented: appState.hasError, presenting: appState.activeError) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { errorMsg in
+            Text(errorMsg)
+        }
     }
 
     private var windowTitle: String {

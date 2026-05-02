@@ -163,9 +163,9 @@ import Testing
     #expect(sql.contains("100\\%"))
 }
 
-// MARK: - Select List (PERF-02)
+// MARK: - Select List
 
-@Test func buildQuerySelectsColumnsWithoutTextCast() {
+@Test func buildQuerySelectsColumnsWithTextCastAndXmin() {
     let builder = QueryBuilder()
     let col = ColumnInfo(
         name: "id", tableName: "users", dataType: "integer", udtName: "int4",
@@ -175,9 +175,10 @@ import Testing
     let table = TableInfo(schema: "public", name: "users", columns: [col])
     let (sql, _) = builder.buildQuery(table: table, filters: [], globalSearch: nil)
 
-    // PERF-02: Should NOT contain ::text cast
-    #expect(!sql.contains("::text AS"), "SELECT list should not cast columns to text")
-    #expect(sql.contains("SELECT \"id\" FROM"))
+    // Ensure it casts columns to text for server-side formatting
+    #expect(sql.contains("::text AS"), "SELECT list should cast columns to text")
+    // Ensure it fetches xmin for OCC
+    #expect(sql.contains("xmin::text AS xmin"), "SELECT list should append xmin for concurrency control")
 }
 
 @Test func buildQueryUsesStarWhenNoColumnsKnown() {

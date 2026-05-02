@@ -17,6 +17,9 @@ let package = Package(
             ],
             path: "Glint",
             exclude: ["Glint.entitlements"],
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]

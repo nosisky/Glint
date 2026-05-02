@@ -201,6 +201,19 @@ final class AppState {
     }
 
     // UI
+    var activeError: String? = nil
+    var hasError: Binding<Bool> {
+        Binding(
+            get: { self.activeError != nil },
+            set: { if !$0 { self.activeError = nil } }
+        )
+    }
+
+    func showError(_ message: String) {
+        self.activeError = message
+        self.statusMessage = message
+    }
+
     var statusMessage = "Ready"
     var selectedSidebarItem: SidebarItem?
     var showConsole = false
@@ -421,8 +434,7 @@ final class AppState {
             print("[Glint] Successfully switched to \(dbName) — \(schemas.flatMap(\.tables).count) tables loaded")
         } catch {
             print("[Glint] switchDatabase failed: \(error)")
-            statusMessage = "Failed to switch: \(error.localizedDescription)"
-            connectionError = error.localizedDescription
+            showError("Error:\n\n\(error.localizedDescription)")
             // Try to reconnect to the original database
             do {
                 let fallbackPool = ConnectionPool(config: config, password: password)
@@ -454,7 +466,7 @@ final class AppState {
             let schemaInfos = try await introspector.fetchSchemas()
             let schemaNames: [String] = schemaInfos.isEmpty ? ["public"] : schemaInfos.map(\.name)
 
-            // PERF-04: Fetch tables and functions for all schemas in parallel
+            // Fetch tables and functions for all schemas in parallel
             var loaded: [DatabaseSchemaInfo] = []
             try await withThrowingTaskGroup(of: DatabaseSchemaInfo.self) { group in
                 for name in schemaNames {
@@ -542,7 +554,7 @@ final class AppState {
     // MARK: - Data Fetching
 
     func fetchTableData() async {
-        // BUG-03: Cancel any in-flight fetch to prevent stale data overwrites
+        // Cancel any in-flight fetch to prevent race conditions from overwriting fresh data
         activeFetchTask?.cancel()
 
         let task = Task { @MainActor [weak self] in
@@ -811,14 +823,14 @@ final class AppState {
         let editsByRow = Dictionary(grouping: pendingEdits) { $0.rowId }
         let qTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
 
-        // BUG-07: Collect ALL primary key columns for composite PK support
+        // Identify primary key columns to correctly support composite keys
         let pkColumns = table.columns.filter { $0.isPrimaryKey }
         let pkIndices = table.columns.enumerated().filter { $0.element.isPrimaryKey }.map { $0.offset }
 
         do {
             let conn = try await pool.getConnection()
 
-            // SAFE-04: Wrap all edits in a transaction for atomic commit/rollback
+            // Execute mutations within a transaction block for atomicity
             try await conn.execute("BEGIN")
 
             do {
@@ -828,7 +840,7 @@ final class AppState {
                     let isNewRow = newRowIds.contains(rowId)
 
                     if isNewRow {
-                        // BUG-05: Generate INSERT for new rows
+                        // Generate an INSERT statement for newly created rows
                         let allEdits = edits.filter { $0.newValue != nil }
 
                         let sql: String
@@ -859,8 +871,8 @@ final class AppState {
 
                         guard !setClauses.isEmpty else { continue }
 
-                        // BUG-07: Build compound WHERE clause for all PK columns
-                        let whereConditions: [String]
+                        // Build a compound WHERE clause matching all components of the primary key
+                        var whereConditions: [String] = []
                         if !pkColumns.isEmpty {
                             whereConditions = zip(pkColumns, pkIndices).compactMap { (pkCol, pkIdx) -> String? in
                                 guard let pkValue = originalRow[pkIdx]?.rawValue else { return nil }
@@ -877,16 +889,27 @@ final class AppState {
                             continue
                         }
 
-                        // SAFE-03: Use RETURNING to verify exactly 1 row was affected
+                        // Enforce Optimistic Concurrency Control (OCC) using the transaction ID
+                        if let xmin = originalRow.xmin {
+                            whereConditions.append("xmin = \(xmin)")
+                        }
+
+                        // Use the RETURNING clause to verify mutation counts
                         let returningCols = pkColumns.map { SQLSanitizer.quoteIdentifier($0.name) }.joined(separator: ", ")
                         let sql = "UPDATE \(qTable) SET \(setClauses.joined(separator: ", ")) WHERE \(whereConditions.joined(separator: " AND ")) RETURNING \(returningCols)"
                         print("[Glint] Executing UPDATE: \(sql)")
 
                         let resultRows = try await conn.queryAll(sql)
                         if resultRows.count != 1 {
-                            throw PostgresConnection.ConnectionError.queryFailed(
-                                "Expected to update 1 row but affected \(resultRows.count) rows"
-                            )
+                            if originalRow.xmin != nil {
+                                throw PostgresConnection.ConnectionError.queryFailed(
+                                    "Concurrency Error: This row was modified or deleted by another user. Please refresh the table to see the latest data."
+                                )
+                            } else {
+                                throw PostgresConnection.ConnectionError.queryFailed(
+                                    "Expected to update 1 row but affected \(resultRows.count) rows"
+                                )
+                            }
                         }
                     }
                 }
@@ -894,7 +917,7 @@ final class AppState {
                 try await conn.execute("COMMIT")
                 print("[Glint] Transaction committed: \(editsByRow.count) row(s) updated")
             } catch {
-                // SAFE-04: Rollback on any error
+                // Roll back the active transaction if any mutation fails
                 _ = try? await conn.execute("ROLLBACK")
                 throw error
             }
@@ -905,7 +928,7 @@ final class AppState {
             await fetchTableData()
         } catch {
             print("[Glint] Commit failed: \(error)")
-            statusMessage = "Commit failed: \(error.localizedDescription)"
+            showError("Commit failed:\n\n\(error.localizedDescription)")
         }
     }
 
@@ -945,38 +968,59 @@ final class AppState {
 
         do {
             let conn = try await pool.getConnection()
-            try await conn.execute("BEGIN")
+            
+            do {
+                try await conn.execute("BEGIN")
 
-            for row in rowsToDelete {
-                let whereConditions = zip(pkColumns, pkIndices).compactMap { (pkCol, pkIdx) -> String? in
-                    guard let pkValue = row[pkIdx]?.rawValue else { return nil }
-                    return "\(SQLSanitizer.quoteIdentifier(pkCol.name)) = \(SQLSanitizer.quoteLiteral(pkValue))"
+                for row in rowsToDelete {
+                    var whereConditions: [String] = []
+                    whereConditions = zip(pkColumns, pkIndices).compactMap { (pkCol, pkIdx) -> String? in
+                        guard let pkValue = row[pkIdx]?.rawValue else { return nil }
+                        return "\(SQLSanitizer.quoteIdentifier(pkCol.name)) = \(SQLSanitizer.quoteLiteral(pkValue))"
+                    }
+
+                    guard whereConditions.count == pkColumns.count else {
+                        throw PostgresConnection.ConnectionError.queryFailed("Cannot delete row with NULL primary key")
+                    }
+
+                    if let xmin = row.xmin {
+                        whereConditions.append("xmin = \(xmin)")
+                    }
+
+                    let returningCols = pkColumns.map { SQLSanitizer.quoteIdentifier($0.name) }.joined(separator: ", ")
+                    let sql = "DELETE FROM \(qTable) WHERE \(whereConditions.joined(separator: " AND ")) RETURNING \(returningCols)"
+                    let resultRows = try await conn.queryAll(sql)
+                    
+                    if resultRows.isEmpty {
+                        if row.xmin != nil {
+                            throw PostgresConnection.ConnectionError.queryFailed(
+                                "Concurrency Error: This row was modified or deleted by another user. Please refresh the table to see the latest data."
+                            )
+                        } else {
+                            throw PostgresConnection.ConnectionError.queryFailed("Row not found for deletion.")
+                        }
+                    }
                 }
 
-                guard whereConditions.count == pkColumns.count else {
-                    throw PostgresConnection.ConnectionError.queryFailed("Cannot delete row with NULL primary key")
-                }
-
-                let sql = "DELETE FROM \(qTable) WHERE \(whereConditions.joined(separator: " AND "))"
-                try await conn.execute(sql)
+                try await conn.execute("COMMIT")
+                selectedRowIds.removeAll()
+                statusMessage = "Deleted \(rowsToDelete.count) row(s)"
+                await fetchTableData()
+            } catch {
+                _ = try? await conn.execute("ROLLBACK")
+                showError("Delete failed:\n\n\(error.localizedDescription)")
             }
-
-            try await conn.execute("COMMIT")
-            selectedRowIds.removeAll()
-            statusMessage = "Deleted \(rowsToDelete.count) row(s)"
-            await fetchTableData()
         } catch {
-            _ = try? await pool.getConnection().execute("ROLLBACK")
-            statusMessage = "Delete failed: \(error.localizedDescription)"
+            showError("Failed to acquire connection:\n\n\(error.localizedDescription)")
         }
-    }
+    } 
 
     func insertNewRow() {
         guard let table = selectedTable else { return }
         let newRow = TableRow(values: table.columns.map {
             CellValue(columnName: $0.name, rawValue: nil, dataType: $0.udtName)
         })
-        // BUG-05: Track this as a new row so commitEdits generates INSERT
+        // Track as a new row so the commit engine issues an INSERT
         newRowIds.insert(newRow.id)
         queryResult = QueryResult(
             rows: [newRow] + queryResult.rows,

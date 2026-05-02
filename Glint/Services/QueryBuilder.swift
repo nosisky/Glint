@@ -48,17 +48,24 @@ struct QueryBuilder: Sendable {
             orderClause = "ORDER BY 1 ASC"
         }
 
-        // PERF-02 Fix: Use ::text to format all complex types (dates, enums, geometries) perfectly
-        // on the server. To preserve native index sorting, the ORDER BY clause uses the fully
+        // Format all complex types (dates, enums, geometries) perfectly using ::text casting.
+        // On the server, this preserves native index sorting. The ORDER BY clause uses the fully
         // qualified table column (e.g. table.col) instead of the SELECT alias.
-        let selectList = table.columns.isEmpty ? "*" : table.columns.map {
-            "\(qualifiedTable).\(SQLSanitizer.quoteIdentifier($0.name))::text AS \(SQLSanitizer.quoteIdentifier($0.name))"
+        let selectList = table.columns.isEmpty ? "*" : table.columns.map { col -> String in
+            let qCol = "\(qualifiedTable).\(SQLSanitizer.quoteIdentifier(col.name))"
+            if col.dataType.lowercased() == "bytea" {
+                // Prevent massive network payloads by summarizing bytea columns
+                return "'<binary data (' || pg_size_pretty(length(\(qCol))::numeric) || ')>'::text AS \(SQLSanitizer.quoteIdentifier(col.name))"
+            }
+            return "\(qCol)::text AS \(SQLSanitizer.quoteIdentifier(col.name))"
         }.joined(separator: ", ")
+        
+        let finalSelectList = table.columns.isEmpty ? selectList : "\(selectList), \(qualifiedTable).xmin::text AS xmin"
 
         let paginationClause = limit != nil ? "\nLIMIT \(limit!) OFFSET \(offset)" : ""
 
         let sql = """
-            SELECT \(selectList) FROM \(qualifiedTable)
+            SELECT \(finalSelectList) FROM \(qualifiedTable)
             \(whereClause)
             \(orderClause)\(paginationClause)
             """.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -144,11 +151,12 @@ struct QueryBuilder: Sendable {
 
     private func buildGlobalSearch(_ searchText: String, columns: [ColumnInfo]) -> String {
         let pattern = SQLSanitizer.quoteLiteral("%\(SQLSanitizer.escapeLike(searchText))%")
-        return columns.compactMap { col -> String? in
+        // Exclude large binary columns to prevent severe CPU/memory spikes.
+        let searchableColumns = columns.filter { $0.dataType.lowercased() != "bytea" }
+        
+        return searchableColumns.map { col -> String in
             let quoted = SQLSanitizer.quoteIdentifier(col.name)
-            if col.isTextSearchable { return "\(quoted) ILIKE \(pattern)" }
-            if col.isNumeric { return "\(quoted)::text ILIKE \(pattern)" }
-            return nil
+            return "\(quoted)::text ILIKE \(pattern)"
         }.joined(separator: " OR ")
     }
 }

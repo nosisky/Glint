@@ -151,7 +151,7 @@ actor PostgresConnection {
         client != nil
     }
 
-    /// BUG-01: Actually verify the connection is alive, not just that a reference exists.
+    /// Actively verifies the connection is alive by pinging the database.
     func healthCheck() async -> Bool {
         guard let client else { return false }
         do {

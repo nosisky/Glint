@@ -103,6 +103,15 @@ struct DataGridView: NSViewRepresentable {
                 coord.hasScrolledToInitialSelection = true
             }
         }
+        
+        if let orderBy = appState.orderByColumn {
+            let descriptor = NSSortDescriptor(key: orderBy, ascending: appState.orderAscending)
+            if tableView.sortDescriptors != [descriptor] {
+                tableView.sortDescriptors = [descriptor]
+            }
+        } else if !tableView.sortDescriptors.isEmpty {
+            tableView.sortDescriptors = []
+        }
 
         if coord.needsInitialSizing && !rows.isEmpty {
             autoSizeColumns(tableView: tableView, columns: columns, rows: rows)
@@ -188,10 +197,22 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
               colIndex < rows[row].values.count
         else { return nil }
 
-        let cell = rows[row].values[colIndex]
+        var cell = rows[row].values[colIndex]
+        let pending = hasPendingEdit(row: row, col: colIndex)
+        
+        // If there's an active pending edit for this cell, overlay the uncommitted value so it doesn't revert visually
+        if pending, let appState = appState {
+            if let edit = appState.pendingEdits.first(where: { $0.rowId == rows[row].id && $0.columnIndex == colIndex }) {
+                cell = CellValue(
+                    columnName: cell.columnName,
+                    rawValue: edit.newValue,
+                    dataType: cell.dataType
+                )
+            }
+        }
+
         let colName = tableColumn.identifier.rawValue
         let meta = enrichedColumns[colName]
-        let pending = hasPendingEdit(row: row, col: colIndex)
 
         if !isPickerMode {
             if meta?.isBoolean == true {

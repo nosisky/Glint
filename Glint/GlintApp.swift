@@ -13,6 +13,11 @@ class GlintAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        
+        if let iconPath = Bundle.module.path(forResource: "AppIcon", ofType: "png"),
+           let iconImage = NSImage(contentsOfFile: iconPath) {
+            NSApp.applicationIconImage = iconImage
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

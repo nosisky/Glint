@@ -23,51 +23,41 @@ struct SQLHighlighter {
         
         let nsRange = NSRange(sql.startIndex..<sql.endIndex, in: sql)
         
-        // 1. Strings
-        stringLiteralRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
-            if let range = Range(match!.range, in: sql) {
-                if let attrRange = attrStr.range(of: sql[range]) {
-                    attrStr[attrRange].foregroundColor = .orange
+        func applyColor(to matchRange: NSRange, color: Color, bold: Bool = false) {
+            if let range = Range(matchRange, in: sql),
+               let lower = AttributedString.Index(range.lowerBound, within: attrStr),
+               let upper = AttributedString.Index(range.upperBound, within: attrStr) {
+                let attrRange = lower..<upper
+                attrStr[attrRange].foregroundColor = color
+                if bold {
+                    attrStr[attrRange].inlinePresentationIntent = .stronglyEmphasized
                 }
             }
+        }
+        
+        // 1. Strings
+        stringLiteralRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
+            applyColor(to: match!.range, color: .orange)
         }
         
         // 2. Numbers
         numberRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
-            if let range = Range(match!.range, in: sql) {
-                if let attrRange = attrStr.range(of: sql[range]) {
-                    attrStr[attrRange].foregroundColor = .cyan
-                }
-            }
+            applyColor(to: match!.range, color: .cyan)
         }
         
         // 3. Keywords
         keywordRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
-            if let range = Range(match!.range, in: sql) {
-                if let attrRange = attrStr.range(of: sql[range]) {
-                    attrStr[attrRange].foregroundColor = .purple
-                    attrStr[attrRange].inlinePresentationIntent = .stronglyEmphasized // Bold
-                }
-            }
+            applyColor(to: match!.range, color: .purple, bold: true)
         }
         
         // 4. Data Types
         dataTypeRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
-            if let range = Range(match!.range, in: sql) {
-                if let attrRange = attrStr.range(of: sql[range]) {
-                    attrStr[attrRange].foregroundColor = .blue
-                }
-            }
+            applyColor(to: match!.range, color: .blue)
         }
         
         // 5. Built-in Functions
         functionRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
-            // Highlight just the function name, not the parentheses
-            if let range = Range(match!.range(at: 1), in: sql) {
-                if let attrRange = attrStr.range(of: sql[range]) {
-                    attrStr[attrRange].foregroundColor = Color(nsColor: .systemTeal)
-                }
-            }
+            applyColor(to: match!.range(at: 1), color: Color(nsColor: .systemTeal))
         }
         
         return attrStr
