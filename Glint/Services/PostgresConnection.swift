@@ -12,11 +12,16 @@ actor PostgresConnection {
     private let config: ConnectionConfig
     private let password: String
     private let logger: Logger
+    private var isConnectingInProgress = false
+
+    /// Connection timeout in seconds.
+    static let connectionTimeoutSeconds: UInt64 = 10
 
     enum ConnectionError: LocalizedError, Sendable {
         case notConnected
         case connectionFailed(String)
         case queryFailed(String)
+        case connectionTimeout
 
         var errorDescription: String? {
             switch self {
@@ -26,6 +31,8 @@ actor PostgresConnection {
                 return "Connection failed: \(reason)"
             case .queryFailed(let reason):
                 return "Query failed: \(reason)"
+            case .connectionTimeout:
+                return "Connection timed out after \(PostgresConnection.connectionTimeoutSeconds) seconds."
             }
         }
     }
@@ -39,8 +46,16 @@ actor PostgresConnection {
     // MARK: - Lifecycle
 
     func connect() async throws {
-        // Cancel any existing connection first
-        disconnect()
+        // Prevent re-entrant connects from causing task leaks
+        guard !isConnectingInProgress else {
+            logger.warning("Connect already in progress, ignoring duplicate call")
+            return
+        }
+        isConnectingInProgress = true
+        defer { isConnectingInProgress = false }
+
+        // Tear down any existing connection first and wait for cleanup
+        await disconnectAndAwait()
 
         var tlsConfig: PostgresClient.Configuration.TLS = .disable
         let isLocalhost = config.host == "localhost" || config.host == "127.0.0.1"
@@ -66,16 +81,42 @@ actor PostgresConnection {
         clientTask = task
         self.client = newClient
 
-        // Verify connectivity — if this fails, tear down immediately
-        // to prevent the pool from retrying with bad credentials.
+        // Allow the run loop to start before issuing queries.
+        // Without this yield, the SELECT 1 verification can race ahead
+        // of PostgresClient.run() and trigger a warning/failure.
+        await Task.yield()
+
+        // Verify connectivity with a timeout — if this fails or times out,
+        // tear down immediately to prevent the pool from retrying with bad credentials.
         do {
-            _ = try await newClient.query("SELECT 1")
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    _ = try await newClient.query("SELECT 1")
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: Self.connectionTimeoutSeconds * 1_000_000_000)
+                    throw ConnectionError.connectionTimeout
+                }
+                // Wait for whichever finishes first
+                try await group.next()
+                // Cancel the remaining task (either the timeout or the query)
+                group.cancelAll()
+            }
+
+            // CONN-04: Set a default statement timeout to prevent runaway queries
+            if let result = try? await newClient.query(PostgresQuery(unsafeSQL: "SET statement_timeout = '30000'")) {
+                for try await _ in result {}
+            }
+
             logger.info("Connected to \(config.host):\(config.port)/\(config.database)")
         } catch {
             // Tear down the client to stop retry loop
             task.cancel()
             clientTask = nil
             client = nil
+            if error is ConnectionError {
+                throw error
+            }
             throw ConnectionError.connectionFailed(error.localizedDescription)
         }
     }
@@ -87,8 +128,31 @@ actor PostgresConnection {
         logger.info("Disconnected from \(config.host)")
     }
 
+    /// Disconnect and await the client task teardown to ensure resources are freed.
+    func disconnectAndAwait() async {
+        guard let task = clientTask else { return }
+        task.cancel()
+        clientTask = nil
+        client = nil
+        // Give the event loop a moment to wind down
+        _ = await task.result
+        logger.info("Disconnected (awaited) from \(config.host)")
+    }
+
     var isConnected: Bool {
         client != nil
+    }
+
+    /// BUG-01: Actually verify the connection is alive, not just that a reference exists.
+    func healthCheck() async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.query(PostgresQuery(unsafeSQL: "SELECT 1"))
+            return true
+        } catch {
+            logger.warning("Health check failed: \(error.localizedDescription)")
+            return false
+        }
     }
 
     // MARK: - Query Execution
@@ -98,6 +162,18 @@ actor PostgresConnection {
         guard let client else { throw ConnectionError.notConnected }
         let pgQuery = PostgresQuery(unsafeSQL: sql)
         return try await client.query(pgQuery)
+    }
+
+    /// Execute a statement and discard all results.
+    /// Use for INSERT, UPDATE, DELETE, BEGIN, COMMIT, ROLLBACK, SET, etc.
+    /// PostgresNIO requires the row sequence to be fully drained before
+    /// the connection can issue another query — discarding with `_` is NOT enough.
+    @discardableResult
+    func execute(_ sql: String) async throws -> Int {
+        let rows = try await query(sql)
+        var count = 0
+        for try await _ in rows { count += 1 }
+        return count
     }
 
     /// Execute a query and collect all rows.
@@ -130,3 +206,4 @@ actor PostgresConnection {
         "\(config.user)@\(config.host):\(config.port)/\(config.database)"
     }
 }
+

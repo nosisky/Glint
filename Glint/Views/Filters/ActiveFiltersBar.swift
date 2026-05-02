@@ -9,7 +9,7 @@ struct ActiveFiltersBar: View {
             HStack(spacing: 6) {
                 if !appState.globalSearchText.isEmpty {
                     FilterPill(
-                        text: "Search: \(appState.globalSearchText)",
+                        text: "Search \(appState.globalSearchText)",
                         icon: "magnifyingglass"
                     ) {
                         Task { await appState.performGlobalSearch("") }
@@ -34,9 +34,9 @@ struct ActiveFiltersBar: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
         }
-        .background(.bar)
+        .background(GlintDesign.panelBackground.opacity(0.72))
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -63,7 +63,11 @@ private struct FilterPill: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.quaternary, in: Capsule())
+        .padding(.vertical, 3)
+        .background(GlintDesign.quietAccent, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(GlintDesign.hairline, lineWidth: 1)
+        )
     }
 }

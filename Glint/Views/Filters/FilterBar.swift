@@ -20,8 +20,7 @@ struct FilterBar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // Column picker
+            HStack(spacing: 6) {
                 Picker("", selection: $selectedColumn) {
                     Text("Any Column").tag("__any__")
                     Divider()
@@ -30,59 +29,53 @@ struct FilterBar: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 140)
+                .controlSize(.small)
+                .frame(width: 130)
 
-                // Operator picker
                 Picker("", selection: $selectedOperator) {
                     ForEach(Self.quickFilterOps, id: \.self) { op in
                         Text(op.displayLabel).tag(op)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 110)
+                .controlSize(.small)
+                .frame(width: 100)
 
-                // Search field — takes remaining space
                 if selectedOperator.requiresValue {
-                    TextField("Search term…", text: $searchText)
+                    TextField("Value…", text: $searchText)
                         .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
                         .focused($isSearchFocused)
                         .onSubmit { applyFilter() }
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .strokeBorder(Color.accentColor, lineWidth: isSearchFocused ? 2.5 : 0)
-                        )
                 }
 
                 Spacer(minLength: 0)
 
-                // Action buttons
-                HStack(spacing: 6) {
-                    Button("Clear Filter") {
-                        clearFilter()
-                    }
-                    .controlSize(.small)
-                    .disabled(searchText.isEmpty && !appState.hasActiveFilters)
-
-                    Button("SQL Preview") {
-                        showSQLPreview.toggle()
-                    }
-                    .controlSize(.small)
-                    .popover(isPresented: $showSQLPreview) {
-                        SQLPreviewPopover()
-                    }
-
-                    Button("Apply Filter") {
-                        applyFilter()
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(selectedOperator.requiresValue && searchText.isEmpty)
-                    .keyboardShortcut(.return, modifiers: [])
+                Button("Clear") {
+                    clearFilter()
                 }
+                .controlSize(.small)
+                .disabled(searchText.isEmpty && !appState.hasActiveFilters)
+
+                Button("SQL") {
+                    showSQLPreview.toggle()
+                }
+                .controlSize(.small)
+                .popover(isPresented: $showSQLPreview) {
+                    SQLPreviewPopover()
+                }
+
+                Button("Apply") {
+                    applyFilter()
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedOperator.requiresValue && searchText.isEmpty)
+                .keyboardShortcut(.return, modifiers: [])
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .padding(.vertical, 6)
+            .background(GlintDesign.panelBackground)
 
             Divider()
         }

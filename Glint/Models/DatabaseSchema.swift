@@ -4,11 +4,13 @@ struct DatabaseSchemaInfo: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     var tables: [TableInfo]
+    var functions: [FunctionInfo]
 
-    init(name: String, tables: [TableInfo] = []) {
+    init(name: String, tables: [TableInfo] = [], functions: [FunctionInfo] = []) {
         self.id = name
         self.name = name
         self.tables = tables
+        self.functions = functions
     }
 }
 
@@ -34,6 +36,13 @@ struct TableInfo: Identifiable, Hashable, Sendable {
         self.estimatedRowCount = estimatedRowCount
     }
 
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
+    static func == (lhs: TableInfo, rhs: TableInfo) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 enum TableType: String, Hashable, Sendable {
@@ -107,4 +116,18 @@ struct ForeignKeyRef: Hashable, Sendable {
     let constraintName: String
     let referencedTable: String
     let referencedColumn: String
+}
+
+struct FunctionInfo: Identifiable, Hashable, Sendable {
+    var id: String { "\(schema).\(name)(\(arguments))" }
+    let schema: String
+    let name: String
+    let arguments: String
+    let returnType: String
+    let extensionName: String?
+    let language: String
+    let definition: String
+    let isStrict: Bool
+    let volatility: String
+    let isSecurityDefiner: Bool
 }

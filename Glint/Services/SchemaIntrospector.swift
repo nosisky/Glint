@@ -23,9 +23,16 @@ actor SchemaIntrospector {
 
     func fetchSchemas() async throws -> [DatabaseSchemaInfo] {
         let rows = try await connection.queryAll("""
-            SELECT schema_name FROM information_schema.schemata
-            WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-            ORDER BY schema_name
+            SELECT schema_name 
+            FROM information_schema.schemata
+            WHERE schema_name != 'pg_toast'
+            ORDER BY 
+                CASE 
+                    WHEN schema_name = 'public' THEN 1
+                    WHEN schema_name IN ('pg_catalog', 'information_schema') THEN 3
+                    ELSE 2
+                END, 
+                schema_name
             """)
         return rows.compactMap {
             guard let name = try? $0.makeRandomAccess()[0].decode(String.self) else { return nil }
@@ -69,21 +76,33 @@ actor SchemaIntrospector {
 
     func fetchColumns(schema: String, table: String) async throws -> [ColumnInfo] {
         let rows = try await connection.queryAll("""
-            SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable,
-                   c.column_default, c.character_maximum_length, c.numeric_precision,
-                   c.ordinal_position,
-                   CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key
-            FROM information_schema.columns c
-            LEFT JOIN (
-                SELECT ku.column_name, ku.table_schema, ku.table_name
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage ku
-                    ON tc.constraint_name = ku.constraint_name AND tc.table_schema = ku.table_schema
-                WHERE tc.constraint_type = 'PRIMARY KEY'
-            ) pk ON pk.column_name = c.column_name
-                AND pk.table_schema = c.table_schema AND pk.table_name = c.table_name
-            WHERE c.table_schema = \(SQLSanitizer.quoteLiteral(schema)) AND c.table_name = \(SQLSanitizer.quoteLiteral(table))
-            ORDER BY c.ordinal_position
+            SELECT
+                a.attname AS column_name,
+                pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+                t.typname AS udt_name,
+                NOT a.attnotnull AS is_nullable,
+                pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
+                CASE 
+                    WHEN a.atttypmod > -1 AND t.typname IN ('varchar', 'bpchar', 'char') THEN a.atttypmod - 4
+                    ELSE NULL
+                END AS character_maximum_length,
+                CASE
+                    WHEN a.atttypmod > -1 AND t.typname IN ('numeric', 'decimal') THEN ((a.atttypmod - 4) >> 16) & 65535
+                    ELSE NULL
+                END AS numeric_precision,
+                a.attnum AS ordinal_position,
+                CASE WHEN ix.indisprimary THEN true ELSE false END AS is_primary_key
+            FROM pg_attribute a
+            JOIN pg_class c ON a.attrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            JOIN pg_type t ON a.atttypid = t.oid
+            LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+            LEFT JOIN pg_index ix ON c.oid = ix.indrelid AND a.attnum = ANY(ix.indkey) AND ix.indisprimary
+            WHERE n.nspname = \(SQLSanitizer.quoteLiteral(schema))
+              AND c.relname = \(SQLSanitizer.quoteLiteral(table))
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY a.attnum
             """)
 
         return rows.compactMap { row -> ColumnInfo? in
@@ -91,9 +110,9 @@ actor SchemaIntrospector {
             guard let name = try? cols[0].decode(String.self),
                   let dataType = try? cols[1].decode(String.self),
                   let udtName = try? cols[2].decode(String.self),
-                  let isNullableRaw = try? cols[3].decode(String.self),
-                  let ordinal = try? cols[7].decode(Int.self),
-                  let isPK = try? cols[8].decode(Bool.self)
+                  let isNullable = try? cols[3].decode(Bool.self),
+                  let ordinal = try? cols[8].decode(Int.self),
+                  let isPK = try? cols[9].decode(Bool.self)
             else { return nil }
 
             return ColumnInfo(
@@ -101,7 +120,7 @@ actor SchemaIntrospector {
                 tableName: table,
                 dataType: dataType,
                 udtName: udtName,
-                isNullable: isNullableRaw == "YES",
+                isNullable: isNullable,
                 isPrimaryKey: isPK,
                 hasDefault: (try? cols[4].decode(String?.self)) != nil,
                 defaultValue: try? cols[4].decode(String?.self),
@@ -116,6 +135,7 @@ actor SchemaIntrospector {
 
     func fetchFullSchema(schema: String = "public") async throws -> DatabaseSchemaInfo {
         var tables = try await fetchTables(schema: schema)
+        let functions = try await fetchFunctions(schema: schema)
         let enums = try await fetchEnumTypes()
         let foreignKeys = try await fetchForeignKeys(schema: schema)
 
@@ -125,7 +145,50 @@ actor SchemaIntrospector {
             enrichWithForeignKeys(&columns, foreignKeys: foreignKeys, tableName: tables[i].name)
             tables[i].columns = columns
         }
-        return DatabaseSchemaInfo(name: schema, tables: tables)
+        return DatabaseSchemaInfo(name: schema, tables: tables, functions: functions)
+    }
+
+    // MARK: - Functions
+
+    func fetchFunctions(schema: String) async throws -> [FunctionInfo] {
+        let rows = try await connection.queryAll("""
+            SELECT p.proname AS function_name, 
+                   pg_get_function_identity_arguments(p.oid) AS arguments, 
+                   pg_get_function_result(p.oid) as return_type,
+                   e.extname AS extension_name,
+                   l.lanname AS language,
+                   p.prosrc AS definition,
+                   p.proisstrict AS is_strict,
+                   p.provolatile AS volatility,
+                   p.prosecdef AS is_security_definer
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            JOIN pg_language l ON p.prolang = l.oid
+            LEFT JOIN pg_depend d ON d.objid = p.oid AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'
+            LEFT JOIN pg_extension e ON e.oid = d.refobjid AND d.refclassid = 'pg_extension'::regclass
+            WHERE n.nspname = \(SQLSanitizer.quoteLiteral(schema))
+            ORDER BY p.proname
+            """)
+        
+        return rows.compactMap { row -> FunctionInfo? in
+            let cols = row.makeRandomAccess()
+            guard let name = try? cols[0].decode(String.self),
+                  let args = try? cols[1].decode(String.self),
+                  let returnType = try? cols[2].decode(String.self),
+                  let language = try? cols[4].decode(String.self),
+                  let definition = try? cols[5].decode(String.self),
+                  let isStrict = try? cols[6].decode(Bool.self),
+                  let volatility = try? cols[7].decode(String.self),
+                  let isSecurityDefiner = try? cols[8].decode(Bool.self)
+            else { return nil }
+            
+            let extensionName = try? cols[3].decode(String?.self)
+            return FunctionInfo(
+                schema: schema, name: name, arguments: args, returnType: returnType,
+                extensionName: extensionName, language: language, definition: definition,
+                isStrict: isStrict, volatility: volatility, isSecurityDefiner: isSecurityDefiner
+            )
+        }
     }
 
     // MARK: - Enum Types

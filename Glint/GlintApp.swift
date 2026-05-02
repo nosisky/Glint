@@ -29,6 +29,17 @@ struct GlintApp: App {
                 Button("New Connection…") { appState.showConnectionSheet = true }
                     .keyboardShortcut("n", modifiers: [.command])
                 Divider()
+                Button("New Tab") { appState.addNewTab() }
+                    .keyboardShortcut("t", modifiers: [.command])
+                    .disabled(!appState.isConnected)
+                Button("Close Tab") {
+                    if let id = appState.activeWorkspaceTabId {
+                        appState.closeTab(id: id)
+                    }
+                }
+                    .keyboardShortcut("w", modifiers: [.command])
+                    .disabled(!appState.isConnected)
+                Divider()
                 Button("Refresh Schema") { Task { await appState.loadSchema() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(!appState.isConnected)

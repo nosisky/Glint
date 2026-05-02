@@ -118,7 +118,7 @@ struct TableStructureView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(index % 2 == 1
-                ? Color(nsColor: .alternatingContentBackgroundColors[1]).opacity(0.5)
+                ? GlintDesign.alternatingRow.opacity(0.5)
                 : .clear
             )
 
@@ -259,7 +259,7 @@ struct TableStructureView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(index % 2 == 1
-                ? Color(nsColor: .alternatingContentBackgroundColors[1]).opacity(0.5)
+                ? GlintDesign.alternatingRow.opacity(0.5)
                 : .clear
             )
 
@@ -314,18 +314,24 @@ struct TableStructureView: View {
     }
 
     private func loadStructure() async {
-        guard let pool = appState.connectionPool else { return }
-        do {
-            let conn = try await pool.getConnection()
-            let introspector = SchemaIntrospector(connection: conn)
+        guard let pool = appState.connectionPool,
+              let conn = try? await pool.getConnection()
+        else {
+            isLoading = false
+            return
+        }
 
-            if let updated = await appState.loadColumnsForTable(table) {
-                detailedTable = updated
-            }
+        let introspector = SchemaIntrospector(connection: conn)
 
-            indexes = try await introspector.fetchIndexes(schema: table.schema, table: table.name)
-            tableMeta = try await introspector.fetchTableMeta(schema: table.schema, table: table.name)
-        } catch {}
+        async let updatedColumns: TableInfo? = appState.loadColumnsForTable(table)
+        async let fetchedIndexes: [SchemaIntrospector.IndexResult] =
+            (try? await introspector.fetchIndexes(schema: table.schema, table: table.name)) ?? []
+        async let fetchedMeta: SchemaIntrospector.TableMeta? =
+            try? await introspector.fetchTableMeta(schema: table.schema, table: table.name)
+
+        if let cols = await updatedColumns { detailedTable = cols }
+        indexes = await fetchedIndexes
+        tableMeta = await fetchedMeta
 
         isLoading = false
     }

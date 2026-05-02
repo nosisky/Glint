@@ -5,7 +5,7 @@ import Foundation
 /// built-in connection pool under the hood).
 actor ConnectionPool {
     private var connection: PostgresConnection?
-    private let config: ConnectionConfig
+    nonisolated let config: ConnectionConfig
     private let password: String
 
     enum PoolError: LocalizedError, Sendable {
@@ -32,7 +32,7 @@ actor ConnectionPool {
 
     func disconnectAll() async {
         if let connection {
-            await connection.disconnect()
+            await connection.disconnectAndAwait()
         }
         connection = nil
     }

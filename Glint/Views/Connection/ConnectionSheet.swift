@@ -8,21 +8,33 @@ struct ConnectionSheet: View {
     @State private var password = ""
     @State private var portString = "5432"
     @State private var isTesting = false
+    @State private var isConnecting = false
     @State private var testResult: String?
     @State private var testSuccess = false
 
+    private var canSubmit: Bool {
+        !config.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !config.database.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !config.user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !password.isEmpty &&
+        Int(portString) != nil &&
+        !isTesting &&
+        !isConnecting
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            Text("New Connection")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
+            HStack {
+                Text("New Connection")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
             Divider()
 
-            // Fields
-            Grid(alignment: .trailing, verticalSpacing: 10) {
+            Grid(alignment: .trailing, verticalSpacing: 8) {
                 GridRow {
                     Text("Name").gridColumnAlignment(.trailing)
                     NativeTextField(text: $config.name, placeholder: "My Database")
@@ -68,31 +80,30 @@ struct ConnectionSheet: View {
                         .toggleStyle(.checkbox)
                 }
             }
-            .font(.system(size: 13))
-            .padding(20)
+            .font(.system(size: 12))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
 
-            // Test result
             if let result = testResult {
                 HStack(spacing: 6) {
                     Image(systemName: testSuccess ? "checkmark.circle" : "xmark.circle")
                         .foregroundStyle(testSuccess ? .green : .red)
                     Text(result)
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
             }
 
             Divider()
 
-            // Actions
-            HStack {
+            HStack(spacing: 8) {
                 Button("Test Connection") { testConnection() }
-                    .disabled(isTesting)
+                    .disabled(!canSubmit)
 
-                if isTesting {
+                if isTesting || isConnecting {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -104,20 +115,23 @@ struct ConnectionSheet: View {
 
                 Button("Connect") { saveAndConnect() }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(!canSubmit)
             }
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
-        .frame(width: 420)
+        .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { portString = "\(config.port)" }
     }
 
     private func testConnection() {
+        guard canSubmit else { return }
         isTesting = true
         testResult = nil
         Task {
             do {
-                let conn = PostgresConnection(config: config, password: password)
+                let conn = PostgresConnection(config: sanitizedConfig(), password: password)
                 try await conn.connect()
                 await conn.disconnect()
                 testResult = "Connection successful"
@@ -131,8 +145,33 @@ struct ConnectionSheet: View {
     }
 
     private func saveAndConnect() {
-        appState.addConnection(config)
-        dismiss()
-        Task { await appState.connect(config: config, password: password) }
+        guard canSubmit else { return }
+        let cleanConfig = sanitizedConfig()
+        isConnecting = true
+        testResult = nil
+        Task {
+            let success = await appState.connect(config: cleanConfig, password: password)
+            if success {
+                appState.addConnection(cleanConfig)
+                dismiss()
+            } else {
+                testResult = appState.connectionError ?? "Connection failed"
+                testSuccess = false
+            }
+            isConnecting = false
+        }
+    }
+
+    private func sanitizedConfig() -> ConnectionConfig {
+        var clean = config
+        clean.name = clean.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean.host = clean.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean.database = clean.database.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean.user = clean.user.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean.port = Int(portString) ?? 5432
+        if clean.name.isEmpty {
+            clean.name = "\(clean.user)@\(clean.host)"
+        }
+        return clean
     }
 }

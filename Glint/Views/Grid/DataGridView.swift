@@ -13,19 +13,21 @@ struct DataGridView: NSViewRepresentable {
         scrollView.drawsBackground = false
 
         let tableView = GlintTableView()
+        tableView.coordinator = context.coordinator
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
-        tableView.rowHeight = 24
-        tableView.intercellSpacing = NSSize(width: 0, height: 0)
-        tableView.gridStyleMask = [.solidVerticalGridLineMask]
-        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.15)
+        tableView.rowHeight = 26
+        tableView.intercellSpacing = NSSize(width: 8, height: 4)
+        tableView.gridStyleMask = [.solidVerticalGridLineMask, .solidHorizontalGridLineMask]
+        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.08)
         tableView.headerView = NSTableHeaderView()
         tableView.cornerView = nil
         tableView.backgroundColor = .clear
         tableView.focusRingType = .none
+        tableView.selectionHighlightStyle = .regular
 
         scrollView.documentView = tableView
         context.coordinator.tableView = tableView
@@ -183,7 +185,28 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
         Task { [weak self] in await self?.appState?.toggleSort(column: key) }
     }
 
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let tableView = notification.object as? NSTableView, let appState else { return }
+        let selectedIndexes = tableView.selectedRowIndexes
+        var selectedIds = Set<UUID>()
+        for idx in selectedIndexes {
+            if idx < rows.count {
+                selectedIds.insert(rows[idx].id)
+            }
+        }
+        appState.selectedRowIds = selectedIds
+    }
+
     // MARK: - NSTextFieldDelegate
+
+    func controlTextDidBeginEditing(_ notification: Notification) {
+        guard let textField = notification.object as? NSTextField,
+              let tableView = self.tableView else { return }
+        let (row, _) = CellFactory.decodeTag(textField.tag)
+        if !tableView.selectedRowIndexes.contains(row) {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let textField = notification.object as? NSTextField else { return }
@@ -198,6 +221,13 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 
     // MARK: - Actions
+
+    @objc func duplicateRow(_ sender: NSMenuItem) {
+        guard let appState = appState,
+              let tableView = tableView else { return }
+        let row = sender.tag
+        Task { await appState.duplicateRow(at: row) }
+    }
 
     @objc func popupChanged(_ sender: NSPopUpButton) {
         let (row, col) = CellFactory.decodeTag(sender.tag)
@@ -264,8 +294,8 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
 @MainActor
 enum CellFactory {
-    static func encodeTag(row: Int, col: Int) -> Int { row * 10000 + col }
-    static func decodeTag(_ tag: Int) -> (row: Int, col: Int) { (tag / 10000, tag % 10000) }
+    static func encodeTag(row: Int, col: Int) -> Int { row * 100_000 + col }
+    static func decodeTag(_ tag: Int) -> (row: Int, col: Int) { (tag / 100_000, tag % 100_000) }
 
     static func text(cell: CellValue, row: Int, col: Int, pending: Bool, delegate: NSTextFieldDelegate) -> NSView {
         let view = NSTableCellView()
@@ -280,7 +310,7 @@ enum CellFactory {
     static func boolean(cell: CellValue, row: Int, col: Int, pending: Bool, delegate: GridCoordinator) -> NSView {
         let view = NSView()
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        popup.font = .systemFont(ofSize: 12, weight: .regular)
         popup.isBordered = false
         popup.addItems(withTitles: ["TRUE", "FALSE"])
         popup.translatesAutoresizingMaskIntoConstraints = false
@@ -300,7 +330,7 @@ enum CellFactory {
     static func enumPicker(cell: CellValue, row: Int, col: Int, values: [String], pending: Bool, delegate: GridCoordinator) -> NSView {
         let view = NSView()
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        popup.font = .systemFont(ofSize: 12, weight: .regular)
         popup.isBordered = false
         popup.addItems(withTitles: values)
         popup.translatesAutoresizingMaskIntoConstraints = false
@@ -357,8 +387,9 @@ enum CellFactory {
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.lineBreakMode = .byTruncatingMiddle
-        field.font = cell.isNull ? .systemFont(ofSize: 12) : .monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.lineBreakMode = .byTruncatingTail
+        // Use a modern, readable proportional font for data instead of monospaced
+        field.font = cell.isNull ? .systemFont(ofSize: 13, weight: .regular) : .systemFont(ofSize: 13, weight: .regular)
         field.textColor = cell.isNull ? .tertiaryLabelColor : .labelColor
         field.delegate = delegate
         field.tag = encodeTag(row: row, col: col)
@@ -368,8 +399,8 @@ enum CellFactory {
 
     private static func pinTextField(_ field: NSTextField, in parent: NSView) {
         NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: 6),
-            field.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -4),
+            field.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: 8),
+            field.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -8),
             field.centerYAnchor.constraint(equalTo: parent.centerYAnchor),
         ])
     }
@@ -392,7 +423,26 @@ enum CellFactory {
 // MARK: - Table View Subclass
 
 private class GlintTableView: NSTableView {
+    weak var coordinator: GridCoordinator?
+
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
         true
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        guard row >= 0 else { return super.menu(for: event) }
+        
+        if !selectedRowIndexes.contains(row) {
+            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        
+        let menu = NSMenu()
+        let dupItem = NSMenuItem(title: "Duplicate Row", action: #selector(GridCoordinator.duplicateRow(_:)), keyEquivalent: "")
+        dupItem.target = coordinator
+        dupItem.tag = row
+        menu.addItem(dupItem)
+        return menu
     }
 }

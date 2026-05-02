@@ -6,6 +6,9 @@ struct RawConsoleView: View {
     @State private var sqlText = ""
     @State private var result: ConsoleResult?
     @State private var isExecuting = false
+    @State private var showDestructiveConfirmation = false
+    @State private var pendingDestructiveSQL = ""
+    @State private var destructiveWarning = ""
 
     enum ConsoleResult {
         case rows(QueryResult)
@@ -20,7 +23,7 @@ struct RawConsoleView: View {
                 HStack {
                     Spacer()
                     if isExecuting { ProgressView().controlSize(.mini) }
-                    Button("Execute") { executeQuery() }
+                    Button("Execute") { attemptExecution() }
                         .disabled(sqlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isExecuting)
                         .keyboardShortcut(.return, modifiers: [.command, .shift])
                 }
@@ -67,10 +70,34 @@ struct RawConsoleView: View {
                 }
             }
         }
+        .alert("Destructive Query", isPresented: $showDestructiveConfirmation) {
+            Button("Execute Anyway", role: .destructive) {
+                executeQuery(pendingDestructiveSQL)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDestructiveSQL = ""
+            }
+        } message: {
+            Text(destructiveWarning + "\n\n" + pendingDestructiveSQL.prefix(500))
+        }
     }
 
-    private func executeQuery() {
+    /// Gate: check if the query is destructive before executing.
+    private func attemptExecution() {
         let trimmed = sqlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if SQLSanitizer.isDestructive(trimmed) {
+            pendingDestructiveSQL = trimmed
+            destructiveWarning = SQLSanitizer.destructiveDescription(trimmed)
+                ?? "This query may modify data."
+            showDestructiveConfirmation = true
+        } else {
+            executeQuery(trimmed)
+        }
+    }
+
+    private func executeQuery(_ trimmed: String) {
         guard !trimmed.isEmpty else { return }
 
         isExecuting = true
@@ -117,7 +144,16 @@ struct RawConsoleView: View {
                         var values: [CellValue] = []
                         for i in 0..<ra.count {
                             let cell = ra[i]
-                            let rawValue: String? = cell.bytes == nil ? nil : (try? cell.decode(String.self))
+                            let rawValue: String?
+                            if var bytes = cell.bytes {
+                                if let str = try? cell.decode(String.self) {
+                                    rawValue = str
+                                } else {
+                                    rawValue = bytes.readString(length: bytes.readableBytes)
+                                }
+                            } else {
+                                rawValue = nil
+                            }
                             values.append(CellValue(
                                 columnName: cell.columnName,
                                 rawValue: rawValue,
@@ -168,7 +204,7 @@ private struct ConsoleResultsGrid: View {
                             }
                         }
                         .frame(height: GlintDesign.rowHeight)
-                        .background(index % 2 == 1 ? Color(nsColor: .alternatingContentBackgroundColors[1]).opacity(0.5) : .clear)
+                        .background(index % 2 == 1 ? GlintDesign.alternatingRow.opacity(0.5) : .clear)
                     }
                 } header: {
                     HStack(spacing: 0) {

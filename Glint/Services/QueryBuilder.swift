@@ -8,7 +8,7 @@ struct QueryBuilder: Sendable {
         globalSearch: String?,
         orderBy: String? = nil,
         ascending: Bool = true,
-        limit: Int = 200,
+        limit: Int? = 200,
         offset: Int = 0
     ) -> (sql: String, countSQL: String) {
         var conditions: [String] = []
@@ -28,27 +28,31 @@ struct QueryBuilder: Sendable {
 
         let whereClause = conditions.isEmpty ? "" : "WHERE \(conditions.joined(separator: " AND "))"
 
+        let qualifiedTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
+
         let orderClause: String
         if let orderBy {
             let dir = ascending ? "ASC" : "DESC"
-            orderClause = "ORDER BY \(SQLSanitizer.quoteIdentifier(orderBy)) \(dir) NULLS LAST"
+            orderClause = "ORDER BY \(qualifiedTable).\(SQLSanitizer.quoteIdentifier(orderBy)) \(dir) NULLS LAST"
         } else if let pk = table.columns.first(where: { $0.isPrimaryKey }) {
-            orderClause = "ORDER BY \(SQLSanitizer.quoteIdentifier(pk.name)) ASC"
+            orderClause = "ORDER BY \(qualifiedTable).\(SQLSanitizer.quoteIdentifier(pk.name)) ASC"
         } else {
             orderClause = "ORDER BY 1 ASC"
         }
 
+        // PERF-02 Fix: Use ::text to format all complex types (dates, enums, geometries) perfectly
+        // on the server. To preserve native index sorting, the ORDER BY clause uses the fully
+        // qualified table column (e.g. table.col) instead of the SELECT alias.
         let selectList = table.columns.isEmpty ? "*" : table.columns.map {
-            "\(SQLSanitizer.quoteIdentifier($0.name))::text AS \(SQLSanitizer.quoteIdentifier($0.name))"
+            "\(qualifiedTable).\(SQLSanitizer.quoteIdentifier($0.name))::text AS \(SQLSanitizer.quoteIdentifier($0.name))"
         }.joined(separator: ", ")
 
-        let qualifiedTable = "\(SQLSanitizer.quoteIdentifier(table.schema)).\(SQLSanitizer.quoteIdentifier(table.name))"
+        let paginationClause = limit != nil ? "\nLIMIT \(limit!) OFFSET \(offset)" : ""
 
         let sql = """
             SELECT \(selectList) FROM \(qualifiedTable)
             \(whereClause)
-            \(orderClause)
-            LIMIT \(limit) OFFSET \(offset)
+            \(orderClause)\(paginationClause)
             """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let countSQL = """
