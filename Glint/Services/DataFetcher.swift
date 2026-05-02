@@ -74,10 +74,10 @@ actor DataFetcher {
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = \(qSchema) AND c.relname = \(qTable)
             """)
-        // If the estimate is 0 (never analyzed) or negative, fall back to exact count
+        // If the estimate is 0 (never analyzed) or negative, do NOT fall back to exact count.
+        // A SELECT count(*) on a massive fintech table can cause a DoS lock.
         if estimate <= 0 {
-            let qualifiedTable = "\(SQLSanitizer.quoteIdentifier(schema)).\(SQLSanitizer.quoteIdentifier(table))"
-            return try await connection.queryScalar("SELECT count(*) FROM \(qualifiedTable)")
+            return 0
         }
         return estimate
     }
@@ -200,6 +200,11 @@ actor DataFetcher {
             if let v = try? cell.decode(Double.self) { return String(v) }
         case .numeric:
             if let v = try? cell.decode(Decimal.self) { return "\(v)" }
+            return "[Precision Exceeds Decimal Limits]"
+        case .bytea:
+            let length = bytes.readableBytes
+            guard let rawBytes = bytes.readBytes(length: length) else { return "\\x" }
+            return "\\x" + rawBytes.map { String(format: "%02x", $0) }.joined()
         case .uuid:
             if let v = try? cell.decode(UUID.self) { return v.uuidString }
         case .date:

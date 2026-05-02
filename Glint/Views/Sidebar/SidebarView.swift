@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-
+ 
 /// Sidebar — Postico-style: search bar + flat table list.
 struct SidebarView: View {
     @Environment(AppState.self) private var appState
@@ -240,10 +240,18 @@ private struct ConnectedSidebar: View {
                 
                 Divider()
                 
-                Button("Export CSV...") {
-                    Task {
-                        await appState.selectTable(table)
-                        await appState.exportTableAsCSV()
+                Menu("Export") {
+                    Button("Export as CSV...") {
+                        Task {
+                            await appState.selectTable(table)
+                            await appState.exportTableAsCSV()
+                        }
+                    }
+                    Button("Export as JSON...") {
+                        Task {
+                            await appState.selectTable(table)
+                            await appState.exportTableAsJSON()
+                        }
                     }
                 }
             }

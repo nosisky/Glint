@@ -64,11 +64,38 @@ struct QueryBuilder: Sendable {
 
         let paginationClause = limit != nil ? "\nLIMIT \(limit!) OFFSET \(offset)" : ""
 
-        let sql = """
-            SELECT \(finalSelectList) FROM \(qualifiedTable)
-            \(whereClause)
-            \(orderClause)\(paginationClause)
-            """.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sql: String
+        let isDeepPagination = offset > 1000 // Deep page threshold
+        if let limit = limit, let pk = table.columns.first(where: { $0.isPrimaryKey }), isDeepPagination {
+            let pkCol = SQLSanitizer.quoteIdentifier(pk.name)
+            
+            let subqueryOrderClause: String
+            if let orderBy {
+                let dir = ascending ? "ASC" : "DESC"
+                subqueryOrderClause = "ORDER BY \(SQLSanitizer.quoteIdentifier(orderBy)) \(dir) NULLS LAST"
+            } else {
+                subqueryOrderClause = "ORDER BY \(pkCol) ASC"
+            }
+            
+            let deferredSubquery = """
+                SELECT \(pkCol) FROM \(qualifiedTable)
+                \(whereClause)
+                \(subqueryOrderClause)
+                LIMIT \(limit) OFFSET \(offset)
+                """
+                
+            sql = """
+                SELECT \(finalSelectList) FROM \(qualifiedTable)
+                INNER JOIN (\(deferredSubquery)) AS _page USING (\(pkCol))
+                \(orderClause)
+                """.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            sql = """
+                SELECT \(finalSelectList) FROM \(qualifiedTable)
+                \(whereClause)
+                \(orderClause)\(paginationClause)
+                """.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
         let countSQL = """
             SELECT count(*) FROM \(qualifiedTable)

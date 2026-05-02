@@ -292,6 +292,47 @@ struct QueryEditorView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
+                
+                if result.hasMore || appState.customQueryPage > 1 {
+                    Menu {
+                        if appState.customQueryPage > 1 {
+                            let prevStart = max(1, (appState.customQueryPage - 2) * appState.customQueryPageSize + 1)
+                            let prevEnd = (appState.customQueryPage - 1) * appState.customQueryPageSize
+                            Button("Previous Page (Rows \(prevStart)-\(prevEnd))") {
+                                appState.customQueryPage -= 1
+                                Task { await appState.executeCustomQuery(appState.customQueryText) }
+                            }
+                        }
+                        
+                        let startRow = (appState.customQueryPage - 1) * appState.customQueryPageSize + 1
+                        let endRow = result.rows.isEmpty ? startRow : startRow + result.rows.count - 1
+                        let currentLabel = result.rows.isEmpty ? "Page \(appState.customQueryPage) (Empty)" : "Rows \(startRow)-\(endRow)"
+                        Button("Current Page (\(currentLabel))") {}
+                            .disabled(true)
+                        
+                        if result.hasMore {
+                            Button("Next Page (Rows \(endRow + 1)-\(endRow + appState.customQueryPageSize))") {
+                                appState.customQueryPage += 1
+                                Task { await appState.executeCustomQuery(appState.customQueryText) }
+                            }
+                        }
+                    } label: {
+                        let startRow = (appState.customQueryPage - 1) * appState.customQueryPageSize + 1
+                        let endRow = result.rows.isEmpty ? startRow : startRow + result.rows.count - 1
+                        let labelText = result.rows.isEmpty ? "Empty Page" : "Rows \(startRow)-\(endRow)"
+                        HStack(spacing: 4) {
+                            Text(labelText)
+                                .font(.system(size: 11, weight: .medium))
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 9))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
             } else if appState.queryExecutionError != nil {
                 HStack(spacing: 3) {
                     Circle().fill(.red).frame(width: 6, height: 6)
@@ -302,9 +343,40 @@ struct QueryEditorView: View {
             }
 
             Spacer()
+            
+            // Export Button
+            if appState.customQueryResult != nil && !queryIsEmpty {
+                Menu {
+                    Button("Export as CSV...") {
+                        Task { await appState.exportCustomQueryAsCSV() }
+                    }
+                    Button("Export as JSON...") {
+                        Task { await appState.exportCustomQueryAsJSON() }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if appState.isExporting {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 11))
+                        }
+                        Text("Export")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.gray.opacity(0.2), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(appState.isExporting)
+            }
 
             // Execute button
             Button {
+                appState.customQueryPage = 1 // Reset pagination on new execution
                 Task { await appState.executeCustomQuery(appState.customQueryText) }
             } label: {
                 HStack(spacing: 5) {

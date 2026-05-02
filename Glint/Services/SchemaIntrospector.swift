@@ -52,14 +52,21 @@ actor SchemaIntrospector {
 
     func fetchTables(schema: String = "public") async throws -> [TableInfo] {
         let rows = try await connection.queryAll("""
-            SELECT t.table_schema, t.table_name, t.table_type,
-                   COALESCE(c.reltuples::bigint, 0) as estimated_rows
-            FROM information_schema.tables t
-            LEFT JOIN pg_catalog.pg_class c
-                ON c.relname = t.table_name
-                AND c.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = t.table_schema)
-            WHERE t.table_schema = \(SQLSanitizer.quoteLiteral(schema))
-            ORDER BY t.table_name
+            SELECT 
+                n.nspname AS table_schema,
+                c.relname AS table_name,
+                CASE c.relkind
+                    WHEN 'r' THEN 'BASE TABLE'
+                    WHEN 'p' THEN 'BASE TABLE'
+                    WHEN 'v' THEN 'VIEW'
+                    WHEN 'm' THEN 'MATERIALIZED VIEW'
+                END AS table_type,
+                COALESCE(c.reltuples::bigint, 0) as estimated_rows
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = \(SQLSanitizer.quoteLiteral(schema))
+              AND c.relkind IN ('r', 'p', 'v', 'm')
+            ORDER BY c.relname
             """)
 
         return rows.compactMap { row -> TableInfo? in

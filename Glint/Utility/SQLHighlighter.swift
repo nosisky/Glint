@@ -35,27 +35,27 @@ struct SQLHighlighter {
             }
         }
         
-        // 1. Strings
+        // Strings
         stringLiteralRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
             applyColor(to: match!.range, color: .orange)
         }
         
-        // 2. Numbers
+        // Numbers
         numberRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
             applyColor(to: match!.range, color: .cyan)
         }
         
-        // 3. Keywords
+        // Keywords
         keywordRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
             applyColor(to: match!.range, color: .purple, bold: true)
         }
         
-        // 4. Data Types
+        // Data Types
         dataTypeRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
             applyColor(to: match!.range, color: .blue)
         }
         
-        // 5. Built-in Functions
+        // Built-in Functions
         functionRegex.enumerateMatches(in: sql, options: [], range: nsRange) { match, _, _ in
             applyColor(to: match!.range(at: 1), color: Color(nsColor: .systemTeal))
         }

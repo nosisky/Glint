@@ -17,9 +17,22 @@ struct QueryResult: Sendable {
     let currentOffset: Int
     let executionTimeMs: Double // query execution time for status bar
     let query: String           // raw SQL (hidden from user by default)
+    let explicitHasMore: Bool?  // Used when totalCount is unknown (e.g. custom queries)
 
     var hasMore: Bool {
-        currentOffset + pageSize < totalCount
+        if let explicit = explicitHasMore { return explicit }
+        return currentOffset + pageSize < totalCount
+    }
+
+    init(rows: [TableRow], columns: [ColumnInfo], totalCount: Int64, pageSize: Int, currentOffset: Int, executionTimeMs: Double, query: String, hasMore: Bool? = nil) {
+        self.rows = rows
+        self.columns = columns
+        self.totalCount = totalCount
+        self.pageSize = pageSize
+        self.currentOffset = currentOffset
+        self.executionTimeMs = executionTimeMs
+        self.query = query
+        self.explicitHasMore = hasMore
     }
 
     var currentPage: Int {

@@ -43,6 +43,8 @@ struct WorkspaceTab: Identifiable, Hashable, Equatable {
     var isQueryEditorOpen = false
     var customQueryText: String = ""
     var customQueryResult: QueryResult?
+    var customQueryPage: Int = 1
+    var customQueryPageSize: Int = 200
     var queryExecutionError: String?
     var isExecutingQuery = false
     var queryWriteMode = false

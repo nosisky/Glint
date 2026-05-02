@@ -14,10 +14,11 @@ struct ContentView: View {
     var body: some View {
         @Bindable var state = appState
 
-        NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
-        } detail: {
+        ZStack {
+            NavigationSplitView {
+                SidebarView()
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
+            } detail: {
             if appState.isConnected {
                 VStack(spacing: 0) {
                     TabBarView()
@@ -43,15 +44,23 @@ struct ContentView: View {
                 if appState.isConnected {
                     HStack {
                         if appState.selectedTable != nil {
-                            Button {
-                                Task { await appState.exportTableAsCSV() }
+                            Menu {
+                                Button("Export as CSV...") {
+                                    Task { await appState.exportTableAsCSV() }
+                                }
+                                Button("Export as JSON...") {
+                                    Task { await appState.exportTableAsJSON() }
+                                }
                             } label: {
-                                Label(appState.isExporting ? "Exporting..." : "Export CSV", systemImage: "square.and.arrow.up")
+                                if appState.isExporting {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Label("Export", systemImage: "square.and.arrow.up")
+                                }
                             }
                             .disabled(appState.isExporting)
-                            .help("Export Table as CSV")
+                            .help("Export Table")
                         }
-                        
                         Button {
                             appState.toggleQueryEditor()
                         } label: {
@@ -77,8 +86,23 @@ struct ContentView: View {
                 }
             }
         }
-        .sheet(isPresented: $state.showConnectionSheet) {
+        
+        // Custom Overlay for the Connection Sheet
+        if appState.showConnectionSheet {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    appState.showConnectionSheet = false
+                }
+                .zIndex(1)
+            
             ConnectionSheet()
+                .background(Color(nsColor: .windowBackgroundColor))
+                .cornerRadius(12)
+                .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(2)
+        }
         }
         .onAppear {
             appState.loadSavedConnections()

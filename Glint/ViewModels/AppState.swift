@@ -179,6 +179,14 @@ final class AppState {
         get { workspaceTabs[activeTabIndex].customQueryText }
         set { workspaceTabs[activeTabIndex].customQueryText = newValue }
     }
+    var customQueryPage: Int {
+        get { workspaceTabs[activeTabIndex].customQueryPage }
+        set { workspaceTabs[activeTabIndex].customQueryPage = newValue }
+    }
+    var customQueryPageSize: Int {
+        get { workspaceTabs[activeTabIndex].customQueryPageSize }
+        set { workspaceTabs[activeTabIndex].customQueryPageSize = newValue }
+    }
     var customQueryResult: QueryResult? {
         get { workspaceTabs[activeTabIndex].customQueryResult }
         set { workspaceTabs[activeTabIndex].customQueryResult = newValue }
@@ -404,9 +412,14 @@ final class AppState {
             port: config.port,
             database: dbName,
             user: config.user,
-            useSSL: config.useSSL,
+            sslMode: config.sslMode,
             sshTunnel: config.sshTunnel,
-            colorTag: config.colorTag
+            colorTag: config.colorTag,
+            serverCACertPath: config.serverCACertPath,
+            clientCertPath: config.clientCertPath,
+            clientKeyPath: config.clientKeyPath,
+            startupQuery: config.startupQuery,
+            preConnectScript: config.preConnectScript
         )
 
         do {
@@ -709,16 +722,42 @@ final class AppState {
             }
 
             do {
-                let rowSequence = try await conn.query(trimmed)
+                let isSelect = trimmed.uppercased().hasPrefix("SELECT") || trimmed.uppercased().hasPrefix("WITH")
+                let queryToExecute: String
+                let offset = (customQueryPage - 1) * customQueryPageSize
+                
+                if isSelect {
+                    // Strip trailing semicolon for CTE wrap
+                    var cleanQuery = trimmed
+                    if cleanQuery.hasSuffix(";") { cleanQuery.removeLast() }
+                    
+                    queryToExecute = """
+                        WITH glint_custom_query AS (
+                            \(cleanQuery)
+                        )
+                        SELECT * FROM glint_custom_query
+                        LIMIT \(customQueryPageSize) OFFSET \(offset)
+                        """
+                } else {
+                    queryToExecute = trimmed
+                }
+                
+                let rowSequence = try await conn.query(queryToExecute)
                 var rawRows: [PostgresRow] = []
                 var truncated = false
+                
+                // For non-selects we don't paginate, but we keep the safety cap.
+                // For selects, customQueryPageSize is already limiting it to 200 via SQL.
+                let fetchCap = isSelect ? customQueryPageSize + 1 : maxRows
+                
                 for try await row in rowSequence {
-                    if rawRows.count >= maxRows {
+                    if rawRows.count >= fetchCap {
                         truncated = true
                         continue
                     }
                     rawRows.append(row)
                 }
+                
                 let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
 
                 // Materialize columns from the first row
@@ -755,16 +794,18 @@ final class AppState {
                     ? "\(trimmed)\n-- Results truncated to \(maxRows) rows"
                     : trimmed
 
-                let result = QueryResult(
+                let hasMore = isSelect ? truncated : false
+                
+                customQueryResult = QueryResult(
                     rows: rows,
                     columns: columns,
                     totalCount: Int64(rows.count),
-                    pageSize: rows.count,
-                    currentOffset: 0,
+                    pageSize: customQueryPageSize,
+                    currentOffset: offset,
                     executionTimeMs: durationMs,
-                    query: displayQuery
+                    query: displayQuery,
+                    hasMore: hasMore
                 )
-                customQueryResult = result
 
                 // Record to history
                 queryHistory.insert(QueryHistoryEntry(
@@ -945,7 +986,7 @@ final class AppState {
                 query: queryResult.query
             )
         }
-        pendingEdits.removeAll()
+         pendingEdits.removeAll()
         newRowIds.removeAll()
         statusMessage = "Changes discarded"
     }
@@ -981,7 +1022,7 @@ final class AppState {
 
                     guard whereConditions.count == pkColumns.count else {
                         throw PostgresConnection.ConnectionError.queryFailed("Cannot delete row with NULL primary key")
-                    }
+                      }
 
                     if let xmin = row.xmin {
                         whereConditions.append("xmin = \(xmin)")
@@ -1080,31 +1121,88 @@ final class AppState {
     // MARK: - Export
 
     func exportTableAsCSV() async {
+        await exportTable(format: .csv)
+    }
+    
+    func exportTableAsJSON() async {
+        await exportTable(format: .json)
+    }
+    
+    enum ExportFormat {
+        case csv, json
+    }
+    
+    private func exportTable(format: ExportFormat) async {
         guard let pool = connectionPool, let table = selectedTable else { return }
-        
         isExporting = true
-        statusMessage = "Preparing CSV Export..."
         
         do {
             let conn = try await pool.getConnection()
-            let builder = QueryBuilder()
-            
-            // Build the query WITHOUT limit/offset to fetch the entire matching dataset
-            let (sql, _) = builder.buildQuery(
+            let queryBuilder = QueryBuilder()
+            let (sql, _) = queryBuilder.buildQuery(
                 table: table,
                 filters: filters,
                 globalSearch: globalSearchText.isEmpty ? nil : globalSearchText,
                 orderBy: orderByColumn,
                 ascending: orderAscending,
-                limit: nil,
+                limit: nil as Int?,
                 offset: 0
             )
             
             statusMessage = "Select save location..."
-            try await CSVExporter.exportStreamToCSV(connection: conn, sql: sql, tableName: table.name)
+            if format == .csv {
+                try await DataExporter.exportStreamToCSV(connection: conn, sql: sql, tableName: table.name)
+            } else {
+                try await DataExporter.exportStreamToJSON(connection: conn, sql: sql, tableName: table.name)
+            }
             
             statusMessage = "Export complete!"
-        } catch let error as CSVExportError {
+        } catch let error as DataExportError {
+            statusMessage = error.localizedDescription
+        } catch {
+            statusMessage = "Export failed: \(error.localizedDescription)"
+        }
+        
+        isExporting = false
+    }
+    
+    func exportCustomQueryAsCSV() async {
+        await exportCustomQuery(format: .csv)
+    }
+    
+    func exportCustomQueryAsJSON() async {
+        await exportCustomQuery(format: .json)
+    }
+    
+    private func exportCustomQuery(format: ExportFormat) async {
+        guard let pool = connectionPool else { return }
+        let trimmed = customQueryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isExporting = true
+        
+        do {
+            let conn = try await pool.getConnection()
+            
+            // Re-apply the CTE wrap without LIMIT to export everything
+            let isSelect = trimmed.uppercased().hasPrefix("SELECT") || trimmed.uppercased().hasPrefix("WITH")
+            let sql: String
+            if isSelect {
+                var cleanQuery = trimmed
+                if cleanQuery.hasSuffix(";") { cleanQuery.removeLast() }
+                sql = "WITH glint_custom_query AS (\n\(cleanQuery)\n)\nSELECT * FROM glint_custom_query"
+            } else {
+                sql = trimmed
+            }
+            
+            statusMessage = "Select save location..."
+            if format == .csv {
+                try await DataExporter.exportStreamToCSV(connection: conn, sql: sql, tableName: "custom_query")
+            } else {
+                try await DataExporter.exportStreamToJSON(connection: conn, sql: sql, tableName: "custom_query")
+            }
+            
+            statusMessage = "Export complete!"
+        } catch let error as DataExportError {
             statusMessage = error.localizedDescription
         } catch {
             statusMessage = "Export failed: \(error.localizedDescription)"

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glint - Native PostgreSQL Client for macOS</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="logo">Glint</div>
+        <nav>
+            <a href="#features">Features</a>
+            <a href="https://github.com/nosisky/Glint">GitHub</a>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="badge">Source-Available</div>
+            <h1>Native PostgreSQL client for macOS.</h1>
+            <p>Glint is a fast, clean, and organized database client built entirely in Swift. No electron overhead, just pure performance with deep query pagination and safe concurrency controls.</p>
+            
+            <a href="https://github.com/nosisky/Glint/releases/latest/download/Glint.dmg" class="btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Glint
+            </a>
+        </section>
+
+        <section id="features" class="features">
+            <div class="features-grid">
+                
+                <div class="feature-item">
+                    <h3>Native & Fast</h3>
+                    <p>Built from the ground up using Swift and PostgresNIO. Glint runs natively on Apple Silicon.</p>
+                </div>
+
+                <div class="feature-item">
+                    <h3>Clean & Organized</h3>
+                    <p>A minimalist interface that gets out of your way. Navigate schemas, run queries, and edit data without the clutter.</p>
+                </div>
+
+                <div class="feature-item">
+                    <h3>Deep Pagination</h3>
+                    <p>Execute massive raw SQL queries seamlessly. Glint uses intelligent CTE wrapping to paginate millions of rows instantly.</p>
+                </div>
+
+                <div class="feature-item">
+                    <h3>Safe Updates</h3>
+                    <p>Integrated Optimistic Concurrency Control (OCC) ensures you never accidentally overwrite changes made by another developer.</p>
+                </div>
+
+                <div class="feature-item">
+                    <h3>OOM-Safe Export</h3>
+                    <p>Export gigabytes of data to CSV or JSON. Glint streams exports directly to disk to prevent out-of-memory crashes.</p>
+                </div>
+
+                <div class="feature-item">
+                    <h3>Source-Available</h3>
+                    <p>Transparent and verifiable. You can view the entire source code to see exactly how your data is handled.</p>
+                </div>
+
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div>
+            &copy; 2026 Nas Abdulrasaq. All Rights Reserved.
+        </div>
+        <div>
+            Designed, built, and maintained by <a href="https://github.com/nosisky">Nas Abdulrasaq</a>.
+        </div>
+    </footer>
+</body>
+</html>

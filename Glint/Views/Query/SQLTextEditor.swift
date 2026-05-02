@@ -102,8 +102,16 @@ struct SQLTextEditor: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.01, execute: item)
         }
 
+        @objc func handleScroll() {
+            guard !isUpdating else { return }
+            highlightDebounce?.cancel()
+            let item = DispatchWorkItem { [weak self] in self?.applyHighlighting() }
+            highlightDebounce = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: item)
+        }
+
         func applyHighlighting() {
-            guard let textView, let textStorage = textView.textStorage else { return }
+            guard let textView, let textStorage = textView.textStorage, let layoutManager = textView.layoutManager, let textContainer = textView.textContainer else { return }
             isUpdating = true
             defer { isUpdating = false }
 
@@ -112,15 +120,28 @@ struct SQLTextEditor: NSViewRepresentable {
                 gutterView?.needsDisplay = true
                 return
             }
+            
             let fullRange = NSRange(location: 0, length: src.utf16.count)
             let defaultFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
+            // Calculate visible range with a generous buffer for smooth scrolling
+            let visibleRect = textView.visibleRect
+            let expandedRect = visibleRect.insetBy(dx: 0, dy: -1000)
+            let glyphRange = layoutManager.glyphRange(forBoundingRect: expandedRect, in: textContainer)
+            var charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            
+            // Clamp to valid bounds
+            charRange.location = max(0, charRange.location)
+            charRange.length = min(fullRange.length - charRange.location, charRange.length)
+            if charRange.length <= 0 { charRange = fullRange }
+
             textStorage.beginEditing()
-            textStorage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
-            textStorage.addAttribute(.font, value: defaultFont, range: fullRange)
+            // Reset only the target area to avoid breaking un-rendered text
+            textStorage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: charRange)
+            textStorage.addAttribute(.font, value: defaultFont, range: charRange)
 
             for (regex, color, font) in Self.patterns {
-                regex.enumerateMatches(in: src, range: fullRange) { match, _, _ in
+                regex.enumerateMatches(in: src, range: charRange) { match, _, _ in
                     guard let r = match?.range else { return }
                     textStorage.addAttribute(.foregroundColor, value: color, range: r)
                     if let font { textStorage.addAttribute(.font, value: font, range: r) }
@@ -209,6 +230,11 @@ final class SQLEditorContainer: NSView {
         // Listen for scroll position changes to redraw gutter
         NotificationCenter.default.addObserver(
             gv, selector: #selector(LineGutterView.setNeedsRedisplay),
+            name: NSView.boundsDidChangeNotification,
+            object: sv.contentView
+        )
+        NotificationCenter.default.addObserver(
+            coordinator, selector: #selector(SQLTextEditor.Coordinator.handleScroll),
             name: NSView.boundsDidChangeNotification,
             object: sv.contentView
         )

@@ -10,6 +10,7 @@ import Foundation
 import PostgresNIO
 import Logging
 import NIOCore
+import NIOSSL
 
 /// Actor wrapping PostgresClient — manages the connection lifecycle.
 /// PostgresClient already has a built-in connection pool, so we just wrap it
@@ -21,6 +22,7 @@ actor PostgresConnection {
     private let password: String
     private let logger: Logger
     private var isConnectingInProgress = false
+    private var sshOrchestrator: SSHTunnelOrchestrator?
 
     /// Connection timeout in seconds.
     static let connectionTimeoutSeconds: UInt64 = 10
@@ -64,16 +66,72 @@ actor PostgresConnection {
 
         // Tear down any existing connection first and wait for cleanup
         await disconnectAndAwait()
+        
+        // Execute Pre-Connect Script
+        if let script = config.preConnectScript, !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            logger.info("Executing Pre-Connect Script...")
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", script]
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus != 0 {
+                throw ConnectionError.connectionFailed("Pre-Connect Script failed with status \(process.terminationStatus)")
+            }
+        }
 
+        var activeHost = config.host
+        var activePort = config.port
+
+        // Establish SSH Tunnel if configured
+        if let sshConfig = config.sshTunnel {
+            let orchestrator = SSHTunnelOrchestrator()
+            self.sshOrchestrator = orchestrator
+            activePort = try await orchestrator.establishTunnel(config: sshConfig, targetHost: activeHost, targetPort: activePort)
+            activeHost = "127.0.0.1" // Reroute through the local tunnel port
+        }
+
+        // Configure mTLS / SSL Mode
         var tlsConfig: PostgresClient.Configuration.TLS = .disable
-        let isLocalhost = config.host == "localhost" || config.host == "127.0.0.1"
-        if config.useSSL || !isLocalhost {
+        switch config.sslMode {
+        case .disable:
+            tlsConfig = .disable
+        case .prefer:
             tlsConfig = .prefer(.makeClientConfiguration())
+        case .require, .verifyCA, .verifyFull:
+            var nioTLS = TLSConfiguration.makeClientConfiguration()
+            
+            // Bypass strict domain/certificate validation if just "require"
+            if config.sslMode == .require {
+                nioTLS.certificateVerification = .none
+            } else {
+                nioTLS.certificateVerification = .fullVerification
+            }
+            
+            // Load custom CA if provided
+            if let caPath = config.serverCACertPath, !caPath.isEmpty {
+                nioTLS.trustRoots = .file(caPath)
+            }
+            
+            // Load Client Certificates for mTLS
+            if let certPath = config.clientCertPath, !certPath.isEmpty,
+               let keyPath = config.clientKeyPath, !keyPath.isEmpty {
+                do {
+                    let certs = try NIOSSLCertificate.fromPEMFile(certPath).map { NIOSSLCertificateSource.certificate($0) }
+                    let key = try NIOSSLPrivateKey(file: keyPath, format: .pem)
+                    nioTLS.certificateChain = certs
+                    nioTLS.privateKey = .privateKey(key)
+                } catch {
+                    throw ConnectionError.connectionFailed("Failed to load mTLS certificates: \(error.localizedDescription)")
+                }
+            }
+            
+            tlsConfig = .require(nioTLS)
         }
 
         let pgConfig = PostgresClient.Configuration(
-            host: config.host,
-            port: config.port,
+            host: activeHost,
+            port: activePort,
             username: config.user,
             password: password,
             database: config.database,
@@ -115,6 +173,14 @@ actor PostgresConnection {
             if let result = try? await newClient.query(PostgresQuery(unsafeSQL: "SET statement_timeout = '30000'")) {
                 for try await _ in result {}
             }
+            
+            // Execute user-defined Startup Query
+            if let startupQuery = config.startupQuery, !startupQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                logger.info("Executing Startup Query...")
+                if let result = try? await newClient.query(PostgresQuery(unsafeSQL: startupQuery)) {
+                    for try await _ in result {}
+                }
+            }
 
             logger.info("Connected to \(config.host):\(config.port)/\(config.database)")
         } catch {
@@ -122,6 +188,9 @@ actor PostgresConnection {
             task.cancel()
             clientTask = nil
             client = nil
+            await sshOrchestrator?.terminate()
+            sshOrchestrator = nil
+            
             if error is ConnectionError {
                 throw error
             }
@@ -133,17 +202,24 @@ actor PostgresConnection {
         clientTask?.cancel()
         clientTask = nil
         client = nil
+        Task {
+            await sshOrchestrator?.terminate()
+            sshOrchestrator = nil
+        }
         logger.info("Disconnected from \(config.host)")
     }
 
     /// Disconnect and await the client task teardown to ensure resources are freed.
     func disconnectAndAwait() async {
-        guard let task = clientTask else { return }
-        task.cancel()
-        clientTask = nil
-        client = nil
-        // Give the event loop a moment to wind down
-        _ = await task.result
+        if let task = clientTask {
+            task.cancel()
+            clientTask = nil
+            client = nil
+            // Give the event loop a moment to wind down
+            _ = await task.result
+        }
+        await sshOrchestrator?.terminate()
+        sshOrchestrator = nil
         logger.info("Disconnected (awaited) from \(config.host)")
     }
 
