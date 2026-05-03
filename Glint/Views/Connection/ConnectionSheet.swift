@@ -304,7 +304,7 @@ struct ConnectionSheet: View {
                 testResult = "Connection successful"
                 testSuccess = true
             } catch {
-                testResult = error.localizedDescription
+                testResult = ErrorFormatter.message(from: error)
                 testSuccess = false
             }
             isTesting = false

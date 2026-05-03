@@ -158,7 +158,7 @@ struct ForeignKeyPreviewPopover: View {
             let fetcher = DataFetcher(connection: conn)
             self.result = try await fetcher.fetchTablePage(table: table, limit: limit, offset: page * limit)
         } catch {
-            self.errorMsg = error.localizedDescription
+            self.errorMsg = ErrorFormatter.message(from: error)
         }
         isLoading = false
     }

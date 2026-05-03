@@ -256,6 +256,7 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
         Task { [weak self] in await self?.appState?.toggleSort(column: key) }
     }
 
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let tableView = notification.object as? NSTableView, let appState else { return }
         let selectedIndexes = tableView.selectedRowIndexes
@@ -613,6 +614,35 @@ private class GlintTableView: NSTableView {
 
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
         true
+    }
+
+    /// Clips the alternating row background drawing to only the area
+    /// occupied by actual data rows. Without this, NSTableView paints
+    /// alternating stripes across the entire visible scroll area,
+    /// creating phantom "empty rows" below the real data.
+    override func drawBackground(inClipRect clipRect: NSRect) {
+        let dataHeight = CGFloat(numberOfRows) * (rowHeight + intercellSpacing.height)
+        
+        NSGraphicsContext.current?.saveGraphicsState()
+        let clipPath = NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width, height: dataHeight))
+        clipPath.addClip()
+        
+        super.drawBackground(inClipRect: clipRect)
+        
+        NSGraphicsContext.current?.restoreGraphicsState()
+    }
+
+    /// Clips grid line drawing to actual data rows only.
+    override func drawGrid(inClipRect clipRect: NSRect) {
+        let dataHeight = CGFloat(numberOfRows) * (rowHeight + intercellSpacing.height)
+        
+        NSGraphicsContext.current?.saveGraphicsState()
+        let clipPath = NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width, height: dataHeight))
+        clipPath.addClip()
+        
+        super.drawGrid(inClipRect: clipRect)
+        
+        NSGraphicsContext.current?.restoreGraphicsState()
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

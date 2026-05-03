@@ -182,7 +182,7 @@ struct RawConsoleView: View {
                     result = .message("Query executed successfully.")
                 }
             } catch {
-                result = .error(error.localizedDescription)
+                result = .error(ErrorFormatter.message(from: error))
             }
 
             isExecuting = false

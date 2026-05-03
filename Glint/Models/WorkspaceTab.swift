@@ -50,6 +50,10 @@ struct WorkspaceTab: Identifiable, Hashable, Equatable {
     var queryWriteMode = false
     var queryHistory: [QueryHistoryEntry] = []
     
+    // Explain
+    var explainResult: ExplainPlan?
+    var isExplaining = false
+    
     // UI State
     var activeTab: ContentTab = .content
     

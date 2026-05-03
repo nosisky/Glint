@@ -56,7 +56,7 @@ final class AppState {
     
     var pageSize: Int {
         let stored = UserDefaults.standard.integer(forKey: "glint.pageSize")
-        return stored > 0 ? stored : 20
+        return stored > 0 ? stored : 200
     }
     
     // MARK: - Workspace Tabs
@@ -207,6 +207,14 @@ final class AppState {
         get { workspaceTabs[activeTabIndex].queryHistory }
         set { workspaceTabs[activeTabIndex].queryHistory = newValue }
     }
+    var explainResult: ExplainPlan? {
+        get { workspaceTabs[activeTabIndex].explainResult }
+        set { workspaceTabs[activeTabIndex].explainResult = newValue }
+    }
+    var isExplaining: Bool {
+        get { workspaceTabs[activeTabIndex].isExplaining }
+        set { workspaceTabs[activeTabIndex].isExplaining = newValue }
+    }
 
     // UI
     var activeError: String? = nil
@@ -304,7 +312,7 @@ final class AppState {
             isConnecting = false
             return true
         } catch {
-            connectionError = error.localizedDescription
+            connectionError = ErrorFormatter.message(from: error)
             statusMessage = "Connection failed"
             connectionPool = nil
             activeConnectionId = nil
@@ -447,7 +455,7 @@ final class AppState {
             print("[Glint] Successfully switched to \(dbName) — \(schemas.flatMap(\.tables).count) tables loaded")
         } catch {
             print("[Glint] switchDatabase failed: \(error)")
-            showError("Error:\n\n\(error.localizedDescription)")
+            showError("Error:\n\n\(ErrorFormatter.message(from: error))")
             // Try to reconnect to the original database
             do {
                 let fallbackPool = ConnectionPool(config: config, password: password)
@@ -457,7 +465,7 @@ final class AppState {
                 await loadSchema()
                 statusMessage = "Switch failed, reconnected to \(config.database)"
             } catch {
-                statusMessage = "Connection lost: \(error.localizedDescription)"
+                statusMessage = "Connection lost: \(ErrorFormatter.message(from: error))"
                 isSwitchingDatabase = false
             }
         }
@@ -514,7 +522,7 @@ final class AppState {
             let tableCount = schemas.flatMap(\.tables).count
             statusMessage = "\(tableCount) table\(tableCount == 1 ? "" : "s")"
         } catch {
-            statusMessage = "Schema load failed: \(error.localizedDescription)"
+            statusMessage = "Schema load failed: \(ErrorFormatter.message(from: error))"
         }
 
         isLoadingSchema = false
@@ -594,7 +602,7 @@ final class AppState {
                 statusMessage = "\(queryResult.totalCount) rows · \(String(format: "%.1f", queryResult.executionTimeMs))ms"
             } catch {
                 guard !Task.isCancelled else { return }
-                statusMessage = "Query failed: \(error.localizedDescription)"
+                statusMessage = "Query failed: \(ErrorFormatter.message(from: error))"
             }
 
             isLoadingData = false
@@ -709,6 +717,7 @@ final class AppState {
         isExecutingQuery = true
         queryExecutionError = nil
         customQueryResult = nil
+        explainResult = nil
 
         let startTime = CFAbsoluteTimeGetCurrent()
         let maxRows = 10_000 // Safety cap to prevent OOM on production databases
@@ -826,13 +835,13 @@ final class AppState {
             }
         } catch {
             let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
-            queryExecutionError = error.localizedDescription
+            queryExecutionError = ErrorFormatter.message(from: error)
 
             queryHistory.insert(QueryHistoryEntry(
                 sql: trimmed,
                 durationMs: durationMs,
                 wasError: true,
-                errorMessage: error.localizedDescription
+                errorMessage: ErrorFormatter.message(from: error)
             ), at: 0)
 
             if queryHistory.count > 50 {
@@ -841,6 +850,127 @@ final class AppState {
         }
 
         isExecutingQuery = false
+    }
+
+    // MARK: - Explain
+
+    func executeExplain(_ sql: String, analyze: Bool) async {
+        let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let pool = connectionPool else {
+            queryExecutionError = "No active database connection."
+            return
+        }
+
+        isExplaining = true
+        queryExecutionError = nil
+        customQueryResult = nil
+        explainResult = nil
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        do {
+            let conn = try await pool.getConnection()
+
+            var cleanQuery = trimmed
+            while cleanQuery.hasSuffix(";") { cleanQuery.removeLast() }
+
+            let isDML = ["INSERT", "UPDATE", "DELETE"].contains(where: {
+                cleanQuery.uppercased().hasPrefix($0)
+            })
+
+            // EXPLAIN ANALYZE actually executes the query.
+            // Wrap DML in a transaction so we can roll back the side effects.
+            // Plain EXPLAIN is safe and gets a read-only transaction.
+            // In write mode with a non-DML query, no transaction is needed
+            // because EXPLAIN ANALYZE on a SELECT has no side effects.
+            let needsRollback = analyze && isDML
+            if needsRollback {
+                try await conn.execute("BEGIN")
+            } else if !queryWriteMode {
+                try await conn.execute("BEGIN READ ONLY")
+            }
+
+            do {
+                let analyzeFlag = analyze ? ", ANALYZE" : ""
+                let buffersFlag = analyze ? ", BUFFERS" : ""
+
+                // Always fetch JSON — this is what we parse into the tree
+                let jsonSQL = "EXPLAIN (FORMAT JSON\(analyzeFlag)\(buffersFlag)) \(cleanQuery)"
+                let jsonRows = try await conn.queryAll(jsonSQL)
+
+                var jsonFragments: [String] = []
+                for row in jsonRows {
+                    let cells = row.makeRandomAccess()
+                    if let str = try? cells[0].decode(String.self) {
+                        jsonFragments.append(str)
+                    }
+                }
+                let fullJSON = jsonFragments.joined()
+
+                // For plain EXPLAIN (no ANALYZE), also fetch TEXT format — it's cheap
+                // since the query doesn't actually execute. For ANALYZE, skip the second
+                // execution entirely and generate the text view from the parsed tree.
+                let fullText: String
+                if analyze {
+                    // Parse first to generate text, then create final plan with the generated text
+                    let tempPlan = try ExplainPlan.parse(json: fullJSON, rawText: "", wasAnalyze: analyze)
+                    fullText = tempPlan.textRepresentation
+                } else {
+                    let textSQL = "EXPLAIN (FORMAT TEXT\(analyzeFlag)\(buffersFlag)) \(cleanQuery)"
+                    let textRows = try await conn.queryAll(textSQL)
+                    var textLines: [String] = []
+                    for row in textRows {
+                        let cells = row.makeRandomAccess()
+                        if let str = try? cells[0].decode(String.self) {
+                            textLines.append(str)
+                        }
+                    }
+                    fullText = textLines.joined(separator: "\n")
+                }
+
+                if needsRollback {
+                    _ = try? await conn.execute("ROLLBACK")
+                } else if !queryWriteMode {
+                    _ = try? await conn.execute("COMMIT")
+                }
+
+                let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+                let plan = try ExplainPlan.parse(json: fullJSON, rawText: fullText, wasAnalyze: analyze)
+                explainResult = plan
+
+                queryHistory.insert(QueryHistoryEntry(
+                    sql: "EXPLAIN\(analyze ? " ANALYZE" : "") \(trimmed)",
+                    durationMs: durationMs,
+                    rowCount: 0
+                ), at: 0)
+                if queryHistory.count > 50 {
+                    queryHistory = Array(queryHistory.prefix(50))
+                }
+
+                statusMessage = "Plan ready · \(String(format: "%.0f", durationMs))ms"
+            } catch {
+                if needsRollback || !queryWriteMode {
+                    _ = try? await conn.execute("ROLLBACK")
+                }
+                throw error
+            }
+        } catch {
+            let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            queryExecutionError = ErrorFormatter.message(from: error)
+
+            queryHistory.insert(QueryHistoryEntry(
+                sql: "EXPLAIN\(analyze ? " ANALYZE" : "") \(trimmed)",
+                durationMs: durationMs,
+                wasError: true,
+                errorMessage: ErrorFormatter.message(from: error)
+            ), at: 0)
+            if queryHistory.count > 50 {
+                queryHistory = Array(queryHistory.prefix(50))
+            }
+        }
+
+        isExplaining = false
     }
 
     // MARK: - Sorting
@@ -969,7 +1099,7 @@ final class AppState {
             await fetchTableData()
         } catch {
             print("[Glint] Commit failed: \(error)")
-            showError("Commit failed:\n\n\(error.localizedDescription)")
+            showError("Commit failed:\n\n\(ErrorFormatter.message(from: error))")
         }
     }
 
@@ -1049,10 +1179,10 @@ final class AppState {
                 await fetchTableData()
             } catch {
                 _ = try? await conn.execute("ROLLBACK")
-                showError("Delete failed:\n\n\(error.localizedDescription)")
+                showError("Delete failed:\n\n\(ErrorFormatter.message(from: error))")
             }
         } catch {
-            showError("Failed to acquire connection:\n\n\(error.localizedDescription)")
+            showError("Failed to acquire connection:\n\n\(ErrorFormatter.message(from: error))")
         }
     } 
 
@@ -1158,9 +1288,9 @@ final class AppState {
             
             statusMessage = "Export complete!"
         } catch let error as DataExportError {
-            statusMessage = error.localizedDescription
+            statusMessage = ErrorFormatter.message(from: error)
         } catch {
-            statusMessage = "Export failed: \(error.localizedDescription)"
+            statusMessage = "Export failed: \(ErrorFormatter.message(from: error))"
         }
         
         isExporting = false
@@ -1203,9 +1333,9 @@ final class AppState {
             
             statusMessage = "Export complete!"
         } catch let error as DataExportError {
-            statusMessage = error.localizedDescription
+            statusMessage = ErrorFormatter.message(from: error)
         } catch {
-            statusMessage = "Export failed: \(error.localizedDescription)"
+            statusMessage = "Export failed: \(ErrorFormatter.message(from: error))"
         }
         
         isExporting = false

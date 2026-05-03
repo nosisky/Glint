@@ -405,8 +405,8 @@ private struct BottomBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(appState.currentPage <= 1)
-            .opacity(appState.currentPage <= 1 ? 0.4 : 1)
+            .disabled(appState.currentPage <= 1 || appState.hasPendingEdits)
+            .opacity(appState.currentPage <= 1 || appState.hasPendingEdits ? 0.4 : 1)
 
             Text("\(appState.currentPage) / \(appState.queryResult.totalPages)")
                 .font(.system(size: 13, weight: .medium))
@@ -419,8 +419,8 @@ private struct BottomBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!appState.queryResult.hasMore)
-            .opacity(!appState.queryResult.hasMore ? 0.4 : 1)
+            .disabled(!appState.queryResult.hasMore || appState.hasPendingEdits)
+            .opacity(!appState.queryResult.hasMore || appState.hasPendingEdits ? 0.4 : 1)
         }
     }
 }

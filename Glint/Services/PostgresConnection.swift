@@ -122,7 +122,7 @@ actor PostgresConnection {
                     nioTLS.certificateChain = certs
                     nioTLS.privateKey = .privateKey(key)
                 } catch {
-                    throw ConnectionError.connectionFailed("Failed to load mTLS certificates: \(error.localizedDescription)")
+                    throw ConnectionError.connectionFailed("Failed to load mTLS certificates: \(ErrorFormatter.message(from: error))")
                 }
             }
             
@@ -194,7 +194,7 @@ actor PostgresConnection {
             if error is ConnectionError {
                 throw error
             }
-            throw ConnectionError.connectionFailed(error.localizedDescription)
+            throw ConnectionError.connectionFailed(ErrorFormatter.message(from: error))
         }
     }
 
@@ -234,7 +234,7 @@ actor PostgresConnection {
             _ = try await client.query(PostgresQuery(unsafeSQL: "SELECT 1"))
             return true
         } catch {
-            logger.warning("Health check failed: \(error.localizedDescription)")
+            logger.warning("Health check failed: \(ErrorFormatter.message(from: error))")
             return false
         }
     }

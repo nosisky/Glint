@@ -173,11 +173,11 @@ struct QueryEditorView: View {
 
     @ViewBuilder
     private var resultsPane: some View {
-        if appState.isExecutingQuery {
+        if appState.isExecutingQuery || appState.isExplaining {
             VStack(spacing: 12) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Executing query…")
+                Text(appState.isExplaining ? "Running EXPLAIN…" : "Executing query…")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
@@ -207,6 +207,8 @@ struct QueryEditorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color.red.opacity(0.03))
+        } else if let explainPlan = appState.explainResult {
+            ExplainVisualizerView(plan: explainPlan)
         } else if let result = appState.customQueryResult {
             if result.rows.isEmpty {
                 VStack(spacing: 12) {
@@ -250,7 +252,7 @@ struct QueryEditorView: View {
 
     private var queryBottomBar: some View {
         let queryIsEmpty = appState.customQueryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let isDisabled = appState.isExecutingQuery || queryIsEmpty
+        let isDisabled = appState.isExecutingQuery || appState.isExplaining || queryIsEmpty
 
         return HStack(spacing: 8) {
             // History button
@@ -374,9 +376,35 @@ struct QueryEditorView: View {
                 .disabled(appState.isExporting)
             }
 
+            // Explain button
+            Menu {
+                Button("Explain") {
+                    Task { await appState.executeExplain(appState.customQueryText, analyze: false) }
+                }
+                Button("Explain Analyze") {
+                    Task { await appState.executeExplain(appState.customQueryText, analyze: true) }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                        .font(.system(size: 11))
+                    Text("Explain")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.gray.opacity(0.2), lineWidth: 1))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(isDisabled)
+            .opacity(isDisabled ? 0.5 : 1.0)
+
             // Execute button
             Button {
                 appState.customQueryPage = 1 // Reset pagination on new execution
+                appState.explainResult = nil // Clear explain when running normal query
                 Task { await appState.executeCustomQuery(appState.customQueryText) }
             } label: {
                 HStack(spacing: 5) {

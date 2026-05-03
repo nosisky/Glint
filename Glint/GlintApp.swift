@@ -95,26 +95,36 @@ struct GlintApp: App {
                     .disabled(!appState.hasActiveFilters)
             }
 
-            CommandGroup(after: .undoRedo) {
-                if appState.hasPendingEdits {
-                    Divider()
-                    Button("Commit Changes") { Task { await appState.commitEdits() } }
-                        .keyboardShortcut(.return, modifiers: [.command])
-                    Button("Discard Changes") { appState.discardEdits() }
-                        .keyboardShortcut(.delete, modifiers: [.command, .shift])
-                }
+            CommandGroup(replacing: .saveItem) {
+                Button("Save / Commit Changes") { Task { await appState.commitEdits() } }
+                    .keyboardShortcut("s", modifiers: [.command])
+                    .disabled(!appState.hasPendingEdits)
+                Button("Discard Changes") { appState.discardEdits() }
+                    .keyboardShortcut(.delete, modifiers: [.command, .shift])
+                    .disabled(!appState.hasPendingEdits)
             }
 
             CommandMenu("Database") {
                 if appState.isConnected {
                     Button("Disconnect") { Task { await appState.disconnect() } }
                     Divider()
+                    Button("Reload Data") {
+                        if appState.customQueryResult != nil {
+                            Task { await appState.executeCustomQuery(appState.customQueryText) }
+                        } else {
+                            Task { await appState.fetchTableData() }
+                        }
+                    }
+                        .keyboardShortcut("r", modifiers: [.command])
+                        .disabled((appState.selectedTable == nil && appState.customQueryResult == nil) || appState.hasPendingEdits)
+                    
+                    Divider()
                     Button("Next Page") { Task { await appState.nextPage() } }
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
-                        .disabled(!appState.queryResult.hasMore)
+                        .disabled(!appState.queryResult.hasMore || appState.hasPendingEdits)
                     Button("Previous Page") { Task { await appState.previousPage() } }
                         .keyboardShortcut(.leftArrow, modifiers: [.command])
-                        .disabled(appState.currentPage <= 1)
+                        .disabled(appState.currentPage <= 1 || appState.hasPendingEdits)
                 } else {
                     Button("Connect…") { appState.showConnectionSheet = true }
                 }
