@@ -54,10 +54,15 @@ struct WorkspaceTab: Identifiable, Hashable, Equatable {
     var explainResult: ExplainPlan?
     var isExplaining = false
     
+    // Activity Monitor
+    var isActivityMonitorOpen = false
+    var backendActivities: [PgBackendActivity] = []
+    
     // UI State
     var activeTab: ContentTab = .content
     
     var title: String {
+        if isActivityMonitorOpen { return "Activity Monitor" }
         if let table = selectedTable { return table.name }
         if let function = selectedFunction { return function.name }
         return "New Tab"

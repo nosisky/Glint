@@ -25,6 +25,8 @@ struct ContentView: View {
                     
                     if appState.isQueryEditorOpen {
                         QueryEditorView()
+                    } else if appState.isActivityMonitorOpen {
+                        ActivityMonitorView()
                     } else if appState.selectedTable != nil {
                         TableContentArea()
                     } else if let function = appState.selectedFunction {
@@ -65,9 +67,19 @@ struct ContentView: View {
                             appState.toggleQueryEditor()
                         } label: {
                             Label("SQL Query", systemImage: "terminal")
+                                .foregroundColor(appState.isQueryEditorOpen ? .accentColor : .primary)
                         }
                         .help("Toggle SQL Query Editor")
                         .keyboardShortcut("e", modifiers: [.command, .shift])
+                        
+                        Button {
+                            appState.toggleActivityMonitor()
+                        } label: {
+                            Label("Activity Monitor", systemImage: "waveform.path.ecg")
+                                .foregroundColor(appState.isActivityMonitorOpen ? .accentColor : .primary)
+                        }
+                        .help("Toggle Activity Monitor")
+                        .keyboardShortcut("a", modifiers: [.command, .shift])
                         
                         Button {
                             Task { await appState.loadSchema() }

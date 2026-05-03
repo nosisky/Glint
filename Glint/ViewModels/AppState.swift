@@ -64,6 +64,26 @@ final class AppState {
     var workspaceTabs: [WorkspaceTab] = [WorkspaceTab()]
     var activeWorkspaceTabId: UUID? = nil
     
+    // MARK: - Activity Monitor
+    var isActivityMonitorOpen: Bool {
+        get { workspaceTabs[activeTabIndex].isActivityMonitorOpen }
+        set {
+            workspaceTabs[activeTabIndex].isActivityMonitorOpen = newValue
+            if newValue {
+                workspaceTabs[activeTabIndex].isQueryEditorOpen = false
+                workspaceTabs[activeTabIndex].selectedTable = nil
+                workspaceTabs[activeTabIndex].selectedFunction = nil
+            }
+        }
+    }
+    
+    var backendActivities: [PgBackendActivity] {
+        get { workspaceTabs[activeTabIndex].backendActivities }
+        set { workspaceTabs[activeTabIndex].backendActivities = newValue }
+    }
+    
+
+    
     func addNewTab() {
         var newTab = WorkspaceTab()
         // Instantly clone the current connection and schema state!
@@ -118,11 +138,25 @@ final class AppState {
 
     var selectedTable: TableInfo? {
         get { workspaceTabs[activeTabIndex].selectedTable }
-        set { workspaceTabs[activeTabIndex].selectedTable = newValue }
+        set {
+            workspaceTabs[activeTabIndex].selectedTable = newValue
+            if newValue != nil {
+                workspaceTabs[activeTabIndex].isQueryEditorOpen = false
+                workspaceTabs[activeTabIndex].isActivityMonitorOpen = false
+                workspaceTabs[activeTabIndex].selectedFunction = nil
+            }
+        }
     }
     var selectedFunction: FunctionInfo? {
         get { workspaceTabs[activeTabIndex].selectedFunction }
-        set { workspaceTabs[activeTabIndex].selectedFunction = newValue }
+        set {
+            workspaceTabs[activeTabIndex].selectedFunction = newValue
+            if newValue != nil {
+                workspaceTabs[activeTabIndex].isQueryEditorOpen = false
+                workspaceTabs[activeTabIndex].isActivityMonitorOpen = false
+                workspaceTabs[activeTabIndex].selectedTable = nil
+            }
+        }
     }
     
     var queryResult: QueryResult {
@@ -688,6 +722,16 @@ final class AppState {
         if isQueryEditorOpen {
             selectedTable = nil
             selectedFunction = nil
+            isActivityMonitorOpen = false
+        }
+    }
+
+    func toggleActivityMonitor() {
+        isActivityMonitorOpen.toggle()
+        if isActivityMonitorOpen {
+            selectedTable = nil
+            selectedFunction = nil
+            isQueryEditorOpen = false
         }
     }
 
@@ -1346,6 +1390,86 @@ final class AppState {
     func loadColumnsForTable(_ table: TableInfo) async -> TableInfo? {
         let enriched = await ensureTableColumns(table)
         return enriched.columns.isEmpty ? nil : enriched
+    }
+    
+    // MARK: - Activity Monitor Methods
+    
+    func fetchActivity() async {
+        guard let pool = connectionPool else { return }
+        do {
+            let conn = try await pool.getConnection()
+            
+            let query = """
+                SELECT
+                    pid,
+                    usename AS user,
+                    application_name,
+                    client_addr,
+                    state,
+                    wait_event,
+                    query,
+                    query_start
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                ORDER BY query_start DESC NULLS LAST;
+            """
+            
+            let result = try await conn.query(query)
+            var activities: [PgBackendActivity] = []
+            
+            for try await row in result {
+                let columns = try row.makeRandomAccess()
+                let pid = try columns[0].decode(Int.self)
+                let user = (try? columns[1].decode(String.self)) ?? "unknown"
+                let appName = (try? columns[2].decode(String.self)) ?? ""
+                let clientAddr = (try? columns[3].decode(String.self)) ?? "local"
+                let state = (try? columns[4].decode(String.self)) ?? "unknown"
+                let waitEvent = (try? columns[5].decode(String.self)) ?? "-"
+                let queryText = (try? columns[6].decode(String.self)) ?? ""
+                let queryStart = try? columns[7].decode(Date.self)
+                
+                activities.append(PgBackendActivity(
+                    id: pid,
+                    user: user,
+                    applicationName: appName,
+                    clientAddr: clientAddr,
+                    state: state,
+                    waitEvent: waitEvent,
+                    query: queryText,
+                    queryStart: queryStart
+                ))
+            }
+            
+            self.backendActivities = activities
+            
+        } catch {
+            print("Failed to fetch pg_stat_activity: \(error)")
+        }
+    }
+    
+    func cancelBackend(pid: Int) async {
+        guard let pool = connectionPool else { return }
+        do {
+            let conn = try await pool.getConnection()
+            _ = try await conn.query("SELECT pg_cancel_backend(\(pid));")
+            await fetchActivity() // Refresh immediately
+        } catch {
+            print("Failed to cancel backend \(pid): \(error)")
+            self.statusMessage = "Failed to cancel query: \(ErrorFormatter.message(from: error))"
+        }
+    }
+    
+    func terminateBackend(pid: Int) async {
+        guard let pool = connectionPool else { return }
+        do {
+            let conn = try await pool.getConnection()
+            _ = try await conn.query("SELECT pg_terminate_backend(\(pid));")
+            await fetchActivity() // Refresh immediately
+        } catch {
+            print("Failed to terminate backend \(pid): \(error)")
+            self.statusMessage = "Failed to terminate connection: \(ErrorFormatter.message(from: error))"
+        }
     }
 }
 
