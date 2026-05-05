@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppState.self) private var appState
+    @State private var isImportWizardPresented = false
 
     var body: some View {
         @Bindable var state = appState
@@ -63,6 +64,14 @@ struct ContentView: View {
                             .disabled(appState.isExporting)
                             .help("Export Table")
                         }
+                        
+                        Button {
+                            isImportWizardPresented = true
+                        } label: {
+                            Label("Import", systemImage: "square.and.arrow.down")
+                        }
+                        .help("Import Data")
+                        
                         Button {
                             appState.toggleQueryEditor()
                         } label: {
@@ -123,6 +132,9 @@ struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: { errorMsg in
             Text(errorMsg)
+        }
+        .sheet(isPresented: $isImportWizardPresented) {
+            ImportWizardView(appState: appState)
         }
     }
 
