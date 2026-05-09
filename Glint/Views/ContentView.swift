@@ -114,6 +114,7 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .onTapGesture {
                     appState.showConnectionSheet = false
+                    appState.editingConnection = nil
                 }
                 .zIndex(1)
             
@@ -486,6 +487,7 @@ struct WelcomeView: View {
                 .padding(.top, 8)
 
             Button("New Connection") {
+                appState.editingConnection = nil
                 appState.showConnectionSheet = true
             }
             .controlSize(.large)
@@ -531,16 +533,30 @@ struct SavedConnectionRow: View {
                         .controlSize(.mini)
                         .frame(width: 22, height: 22)
                 } else {
-                    Button {
-                        showDeleteConfirmation = true
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
+                    HStack(spacing: 2) {
+                        Button {
+                            appState.editingConnection = config
+                            appState.showConnectionSheet = true
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Edit Connection")
+
+                        Button {
+                            showDeleteConfirmation = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Delete Connection")
                     }
-                    .buttonStyle(.plain)
-                    .help("Delete Connection")
                 }
             }
         }

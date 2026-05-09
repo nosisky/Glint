@@ -39,13 +39,26 @@ struct ConnectionSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                Text("New Connection")
+            HStack(spacing: 12) {
+                Text(appState.editingConnection == nil ? "New Connection" : "Edit Connection")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Text("Glint by Nas")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.tertiary)
+                    .padding(.trailing, 4)
+                
+                Button {
+                    appState.showConnectionSheet = false
+                    appState.editingConnection = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -262,6 +275,11 @@ struct ConnectionSheet: View {
                 Button("Show Databases") { /* Future implementation */ }
                     .disabled(true)
 
+                if appState.editingConnection != nil {
+                    Button("Save") { saveOnly() }
+                        .disabled(!canSubmit)
+                }
+
                 Button("Connect") { saveAndConnect() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
@@ -273,6 +291,14 @@ struct ConnectionSheet: View {
         }
         .frame(width: 500)
         .onAppear {
+            if let editingConnection = appState.editingConnection {
+                config = editingConnection
+                password = (try? KeychainService.readPassword(account: editingConnection.keychainAccount)) ?? ""
+            } else {
+                config = ConnectionConfig()
+                password = ""
+                uriInput = ""
+            }
             portString = "\(config.port)"
             showSSHTunnel = config.sshTunnel != nil
             showStartupQuery = config.startupQuery != nil
@@ -311,6 +337,22 @@ struct ConnectionSheet: View {
         }
     }
 
+    private func saveOnly() {
+        guard canSubmit else { return }
+        let cleanConfig = sanitizedConfig()
+        
+        // Save to Keychain for persistence across app launches
+        do {
+            try KeychainService.savePassword(password, account: cleanConfig.keychainAccount)
+        } catch {
+            print("[Glint] Keychain save failed: \(error.localizedDescription) — password kept in memory only")
+        }
+        
+        appState.addConnection(cleanConfig)
+        appState.showConnectionSheet = false
+        appState.editingConnection = nil
+    }
+
     private func saveAndConnect() {
         guard canSubmit else { return }
         let cleanConfig = sanitizedConfig()
@@ -321,6 +363,7 @@ struct ConnectionSheet: View {
             if success {
                 appState.addConnection(cleanConfig)
                 appState.showConnectionSheet = false
+                appState.editingConnection = nil
             } else {
                 testResult = appState.connectionError ?? "Connection failed"
                 testSuccess = false

@@ -66,7 +66,10 @@ struct GlintApp: App {
             }
 
             CommandGroup(replacing: .newItem) {
-                Button("New Connection…") { appState.showConnectionSheet = true }
+                Button("New Connection…") {
+                    appState.editingConnection = nil
+                    appState.showConnectionSheet = true
+                }
                     .keyboardShortcut("n", modifiers: [.command])
                 Divider()
                 Button("New Tab") { appState.addNewTab() }
@@ -126,7 +129,10 @@ struct GlintApp: App {
                         .keyboardShortcut(.leftArrow, modifiers: [.command])
                         .disabled(appState.currentPage <= 1 || appState.hasPendingEdits)
                 } else {
-                    Button("Connect…") { appState.showConnectionSheet = true }
+                    Button("Connect…") {
+                        appState.editingConnection = nil
+                        appState.showConnectionSheet = true
+                    }
                 }
             }
             

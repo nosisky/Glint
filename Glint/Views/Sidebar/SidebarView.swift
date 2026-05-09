@@ -373,6 +373,7 @@ private struct DisconnectedSidebar: View {
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Button {
+                    appState.editingConnection = nil
                     appState.showConnectionSheet = true
                 } label: {
                     Image(systemName: "plus")
@@ -395,6 +396,7 @@ private struct DisconnectedSidebar: View {
                             .font(.system(size: 12))
                             .foregroundStyle(.tertiary)
                         Button("New Connection") {
+                            appState.editingConnection = nil
                             appState.showConnectionSheet = true
                         }
                         .controlSize(.small)

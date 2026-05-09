@@ -27,6 +27,8 @@ final class AppState {
     var isConnecting = false
     var connectionError: String?
     var showConnectionSheet = false
+    var editingConnection: ConnectionConfig? = nil
+
     /// When true, keeps isConnected == true during a database switch
     /// so the sidebar UI isn't destroyed mid-transition.
     private var isSwitchingDatabase = false
@@ -305,7 +307,11 @@ final class AppState {
     }
 
     func addConnection(_ config: ConnectionConfig) {
-        savedConnections.append(config)
+        if let index = savedConnections.firstIndex(where: { $0.id == config.id }) {
+            savedConnections[index] = config
+        } else {
+            savedConnections.append(config)
+        }
         persistConnections()
     }
 
